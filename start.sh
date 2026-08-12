@@ -118,7 +118,8 @@ print(cache_dir if os.path.isdir(cache_dir) else '')
     MMPROJ=$(find "$MODELS_DIR" -name "mmproj*" ! -name "*.incomplete" | head -1)
   fi
 else
-  # Single-file quant: find the GGUF matching the model ID quant, prefer largest
+  # Match GGUF by quant. Single-file: prefer largest. Sharded (NNN-of-MMM):
+  # llama.cpp requires the first shard to auto-discover the rest.
   MODEL_FILE=$(python3 -c "
 import os, glob
 model_id = '$MODEL_ID'
@@ -126,17 +127,15 @@ repo = model_id.split(':')[0]
 quant = model_id.split(':')[1] if ':' in model_id else ''
 cache_base = os.path.expanduser('~/.cache/huggingface/hub')
 cache_dir = os.path.join(cache_base, 'models--' + repo.replace('/', '--'))
-best = ''
-best_size = 0
+matches = []
 for snap in glob.glob(os.path.join(cache_dir, 'snapshots', '*')):
     for f in glob.glob(os.path.join(snap, '**', '*.gguf'), recursive=True):
         if 'mmproj' in f.lower(): continue
         base = os.path.basename(f)
         if quant and quant.lower() in base.lower():
-            sz = os.path.getsize(f)
-            if sz > best_size:
-                best = f; best_size = sz
-print(best)
+            matches.append(f)
+first = next((f for f in matches if '-00001-of-' in os.path.basename(f)), '')
+print(first if first else (max(matches, key=os.path.getsize) if matches else ''))
 ")
   MMPROJ=$(python3 -c "
 import os, glob
