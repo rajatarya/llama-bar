@@ -2,8 +2,27 @@ import AppKit
 import ServiceManagement
 
 private let scriptDir = NSHomeDirectory() + "/code/personal/llama-bar"
+private let configPath = NSHomeDirectory() + "/code/personal/llama-bar/models.json"
 private let healthURL = "http://127.0.0.1:8080/health"
 private let metricsURL = "http://127.0.0.1:8080/metrics"
+
+// MARK: - Model Config
+
+struct ModelConfig: Codable {
+    let name: String
+    let ctx_size: Int
+    let ngl: Int
+    let batch_size: Int
+    let ubatch_size: Int
+    let needs_proxy: Bool
+    let proxy_injection: String?
+    let description: String?
+}
+
+struct ModelsConfig: Codable {
+    let default_model: String
+    let models: [String: ModelConfig]
+}
 
 // MARK: - Helpers
 
@@ -14,10 +33,23 @@ private func sh(_ args: String...) -> String? {
     return String(data: p.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
 }
 
-private func run(_ script: String) {
+private func run(_ args: [String]) {
     let t = Process()
-    t.launchPath = "/bin/bash"; t.arguments = [script]
+    t.launchPath = args[0]; t.arguments = Array(args.dropFirst())
     t.currentDirectoryPath = scriptDir; try? t.run()
+}
+
+private func loadConfig() -> ModelsConfig? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)) else { return nil }
+    return try? JSONDecoder().decode(ModelsConfig.self, from: data)
+}
+
+private func discoverModels() -> [String] {
+    guard let output = sh("/bin/bash", "-c", "\(scriptDir)/discover_models.sh") else { return [] }
+    // Parse JSON array
+    guard let data = output.data(using: .utf8),
+          let models = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+    return models
 }
 
 private func healthy() -> Bool {
@@ -58,11 +90,13 @@ app.setActivationPolicy(.accessory)
 
 let item = NSStatusBar.system.statusItem(withLength: 30)
 item.button?.font = NSFont.systemFont(ofSize: 14, weight: .bold)
-item.button?.toolTip = "Muse-Glimmer-30B-BF16"
+item.button?.toolTip = "LlamaBar"
 
 let menu = NSMenu()
-let titleItem = NSMenuItem(title: "Muse-Glimmer-30B-BF16", action: nil, keyEquivalent: "")
+let titleItem = NSMenuItem(title: "LlamaBar", action: nil, keyEquivalent: "")
 titleItem.isEnabled = false
+let modelItem = NSMenuItem(title: "No models", action: nil, keyEquivalent: "")
+modelItem.isEnabled = false
 let stateItem = NSMenuItem(title: "Stopped", action: nil, keyEquivalent: "")
 stateItem.isEnabled = false
 let statsItem = NSMenuItem(title: "-", action: nil, keyEquivalent: "")
@@ -70,6 +104,7 @@ statsItem.isEnabled = false
 let startItem = NSMenuItem(title: "Start Server", action: nil, keyEquivalent: "")
 let stopItem = NSMenuItem(title: "Stop Server", action: nil, keyEquivalent: "")
 menu.addItem(titleItem)
+menu.addItem(modelItem)
 menu.addItem(stateItem)
 menu.addItem(statsItem)
 menu.addItem(.separator())
@@ -81,28 +116,40 @@ item.menu = menu
 
 var state: State = .stopped
 var lastWasRunning = false
+var currentModelId: String = ""
+var config: ModelsConfig?
 
 func refresh() {
     let ok = healthy()
-
+    
+    // Load config if needed
+    if config == nil {
+        config = loadConfig()
+    }
+    
+    // Update model list
+    let models = discoverModels()
+    if let cfg = config {
+        modelItem.title = "Model: \(cfg.models[currentModelId]?.name ?? "Unknown")"
+    }
+    
     // Transition detection
     if ok && !lastWasRunning {
-        NSSound(named: "Glass")?.play()  // ding when model becomes ready
+        NSSound(named: "Glass")?.play()
     }
     lastWasRunning = ok
-
+    
     // Update state
     switch state {
     case .stopped:
         if ok { state = .running(startedAt: Date()) }
     case .starting(let t0):
         if ok { state = .running(startedAt: Date()) }
-        else if Date().timeIntervalSince(t0) > 120 { state = .stopped }  // gave up
+        else if Date().timeIntervalSince(t0) > 120 { state = .stopped }
     case .running(let t0):
         if !ok { state = .stopped }
-        else { _ = t0 }
     }
-
+    
     // Render
     switch state {
     case .stopped:
@@ -137,14 +184,18 @@ class Target: NSObject {
 }
 
 let startTarget = Target {
-    run("start.sh")
+    if let cfg = loadConfig() {
+        let modelId = cfg.default_model
+        currentModelId = modelId
+        run(["/bin/bash", "-c", "\(scriptDir)/start.sh --model \(modelId)"])
+    } else {
+        run(["/bin/bash", "-c", "\(scriptDir)/start.sh"])
+    }
     state = .starting(startedAt: Date())
-    refresh()
 }
 let stopTarget = Target {
-    run("stop.sh")
+    run(["/bin/bash", "-c", "\(scriptDir)/stop.sh"])
     state = .stopped
-    refresh()
 }
 startItem.target = startTarget; startItem.action = #selector(Target.run)
 stopItem.target = stopTarget; stopItem.action = #selector(Target.run)
@@ -153,11 +204,7 @@ let timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in refr
 timer.tolerance = 1
 RunLoop.current.add(timer, forMode: .common)
 
-// Auto-start on launch
-state = .starting(startedAt: Date())
 refresh()
-run("start.sh")
-
 try? SMAppService.mainApp.register()
 
 app.run()

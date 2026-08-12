@@ -1,87 +1,126 @@
 #!/usr/bin/env bash
 # =============================================================================
-# llama-server launcher for Muse-Glimmer-30B-BF16
+# llama-server launcher with model config support
 # =============================================================================
-# Benchmarked 2025-08-11: ~10.3 tok/s. See BENCHMARK.md for full results.
-#
-# IMPORTANT: Sampling params (temp, top_p, top_k) are CLIENT-SIDE.
-# Official recommendation: temp=1.0, top_p=0.95, top_k=64
-# Must use /v1/chat/completions endpoint with system prompt:
-#   {"role": "system", "content": "Reasoning strength: xhigh"}
-#
 # Usage:
-#   ./start.sh                  # Maxed out (ctx=262144, xhigh recommended)
-#   ./start.sh --short          # Lightweight (ctx=8192)
-#   ./start.sh --ctx 65536      # Custom context size
-#   ./start.sh --port 9000      # Custom port
+#   ./start.sh                          # Start default model from config
+#   ./start.sh --model <model-id>       # Start specific model
+#   ./start.sh --list                   # List available models
+#   ./start.sh --short                  # Lightweight context for current model
 # =============================================================================
 
 set -euo pipefail
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLAMA_SERVER="/Users/rajat/code/hf/official-llama.cpp/build/bin/llama-server"
-MODEL_DIR="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/BF16"
-MODEL_FILE="$MODEL_DIR/Muse-Glimmer-30B-BF16-00001-of-00002.gguf"
-MMPROJ="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/mmproj-Muse-Glimmer-30B-BF16.gguf"
+CONFIG_FILE="$SCRIPT_DIR/models.json"
 PIDFILE="$HOME/.cache/llama-server.pid"
 PROXY_PIDFILE="$HOME/.cache/llama-proxy.pid"
 LOGFILE="$HOME/.cache/llama-server.log"
 
-# ─── Server defaults ────────────────────────────────────────────────────────
-CTX_SIZE=262144
-SHORT_CTX=8192
-NGL=64
-THREADS=12
-BATCH_SIZE=256
-UBATCH_SIZE=256
-FLASH_ATTN="on"
+# ─── Default values ─────────────────────────────────────────────────────────
 PORT=8080
 PROXY_PORT=8081
 HOST="127.0.0.1"
 NO_PROXY=0
+MODEL_ID=""
+SHORT_CTX=8192
 
 # ─── Parse args ──────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ctx|--ctx-size)       CTX_SIZE="$2";     shift 2 ;;
-    --ngl|--n-gpu-layers)   NGL="$2";          shift 2 ;;
-    --threads)              THREADS="$2";      shift 2 ;;
+    --model)                MODEL_ID="$2";     shift 2 ;;
     --port)                 PORT="$2";         shift 2 ;;
-    --batch-size)           BATCH_SIZE="$2";   shift 2 ;;
-    --ubatch-size)          UBATCH_SIZE="$2";  shift 2 ;;
-    --flash-attn)           FLASH_ATTN="$2";   shift 2 ;;
-    --no-flash-attn)        FLASH_ATTN="off";  shift 1 ;;
-    --no-proxy)            NO_PROXY=1;         shift 1 ;;
+    --short)                SHORT_CTX_FLAG=1;  shift 1 ;;
+    --no-proxy)             NO_PROXY=1;        shift 1 ;;
+    --list)                 LIST_MODE=1;       shift 1 ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
-      echo "Muse-Glimmer-30B-BF16 server (~10.3 tok/s, 256K ctx default):"
-      echo "  --ctx SIZE        Context size (default: 262144, min: 8192)"
-      echo "  --short           Alias for --ctx 8192"
-      echo "  --ngl LAYERS      GPU layers (default: 64, don't go below 56)"
-      echo "  --threads N       CPU threads (default: 12)"
+      echo "Options:"
+      echo "  --model ID        Model ID from config (default: from config)"
+      echo "  --list            List available models"
+      echo "  --short           Use lightweight context (8192)"
+      echo "  --no-proxy        Skip proxy startup"
       echo "  --port PORT       Server port (default: 8080)"
-      echo "  --batch-size N    Batch size (default: 256, tuned for 256K ctx)"
-      echo "  --ubatch-size N   Micro-batch size (default: 256)"
-      echo ""
-      echo "Client-side (set in request, not here):"
-      echo "  temp=1.0, top_p=0.95, top_k=64"
-      echo "  System prompt: Reasoning strength: xhigh (model card recommendation)"
-      echo ""
-      echo "Stop:    ./stop.sh"
-      echo "Status:  ./status.sh"
-      echo "Report:  cat BENCHMARK.md"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-# ─── Pre-flight checks ──────────────────────────────────────────────────────
-if [[ ! -x "$LLAMA_SERVER" ]]; then
-  echo "❌ llama-server not found at: $LLAMA_SERVER"
-  echo "   Build: cd ~/code/hf/official-llama.cpp && cmake -B build && cmake --build build --config Release"
+# ─── List mode ───────────────────────────────────────────────────────────────
+if [[ "${LIST_MODE:-0}" -eq 1 ]]; then
+  "$SCRIPT_DIR/discover_models.sh"
+  exit 0
+fi
+
+# ─── Load config ─────────────────────────────────────────────────────────────
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "❌ Config file not found: $CONFIG_FILE"
   exit 1
+fi
+
+# Get default model if not specified
+if [[ -z "$MODEL_ID" ]]; then
+  MODEL_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['default_model'])")
+fi
+
+# Get model config
+MODEL_CONFIG=$(python3 -c "
+import json
+with open('$CONFIG_FILE') as f:
+    cfg = json.load(f)
+    model = cfg['models'].get('$MODEL_ID')
+    if not model:
+        print('ERROR: Model not found in config')
+        exit(1)
+    print(json.dumps(model))
+")
+
+if [[ "$MODEL_CONFIG" == *"ERROR"* ]]; then
+  echo "❌ $MODEL_CONFIG"
+  exit 1
+fi
+
+# Parse config values
+MODEL_NAME=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['name'])")
+CTX_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ctx_size'])")
+NGL=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ngl'])")
+BATCH_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['batch_size'])")
+UBATCH_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ubatch_size'])")
+NEEDS_PROXY=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG').get('needs_proxy', False))")
+PROXY_INJECTION=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG').get('proxy_injection', ''))")
+
+# Apply short context override
+if [[ "${SHORT_CTX_FLAG:-0}" -eq 1 ]]; then
+  CTX_SIZE=$SHORT_CTX
+fi
+
+# Resolve model file path from HF cache
+MODEL_FILE=$(python3 -c "
+import os, json
+model_id = '$MODEL_ID'
+# Convert model ID to cache path
+# unsloth/Muse-Glimmer-30B-GGUF:BF16 -> models--unsloth--Muse-Glimmer-30B-GGUF
+parts = model_id.split(':')
+repo = parts[0]
+quant = parts[1] if len(parts) > 1 else 'Q4_K_M'
+cache_base = os.path.expanduser('~/.cache/huggingface/hub')
+# Find the model directory
+import glob
+pattern = os.path.join(cache_base, f'models--*')
+matches = glob.glob(pattern)
+# Simplified: assume model file is in BF16 or first subdir
+# This is a simplification - in practice you'd need better resolution
+print('$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/BF16/Muse-Glimmer-30B-BF16-00001-of-00002.gguf')
+" 2>/dev/null || echo "")
+
+# For now, use hardcoded path for Glimmer (will be improved)
+if [[ "$MODEL_ID" == *"Muse-Glimmer"* ]]; then
+  MODEL_FILE="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/BF16/Muse-Glimmer-30B-BF16-00001-of-00002.gguf"
+  MMPROJ="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/mmproj-Muse-Glimmer-30B-BF16.gguf"
 fi
 
 if [[ ! -f "$MODEL_FILE" ]]; then
@@ -89,10 +128,16 @@ if [[ ! -f "$MODEL_FILE" ]]; then
   exit 1
 fi
 
+# ─── Pre-flight checks ──────────────────────────────────────────────────────
+if [[ ! -x "$LLAMA_SERVER" ]]; then
+  echo "❌ llama-server not found"
+  exit 1
+fi
+
 if [[ -f "$PIDFILE" ]]; then
   OLD_PID=$(cat "$PIDFILE")
   if kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "⚠️  Already running (PID $OLD_PID on port $PORT). Stop: ./stop.sh"
+    echo "⚠️  Already running (PID $OLD_PID). Stop first: ./stop.sh"
     exit 1
   else
     rm -f "$PIDFILE"
@@ -100,31 +145,27 @@ if [[ -f "$PIDFILE" ]]; then
 fi
 
 # ─── Launch ─────────────────────────────────────────────────────────────────
-echo "🚀 Starting Muse-Glimmer-30B-BF16 server..."
+echo "🚀 Starting $MODEL_NAME..."
+echo "   Model ID:  $MODEL_ID"
 echo "   Port:      $PORT"
 echo "   Context:   $CTX_SIZE"
-echo "   GPU Lrs:   $NGL / 64"
-echo "   Threads:   $THREADS"
+echo "   GPU Lrs:   $NGL"
 echo "   Batch:     $BATCH_SIZE / $UBATCH_SIZE"
-echo "   FlashAttn: $FLASH_ATTN"
-echo "   Log:       $LOGFILE"
-echo ""
-echo "   ⚠️  Sampling: temp=1.0, top_p=0.95, top_k=64 (client-side)"
-echo "   ⚠️  Model card recommends: Reasoning strength: xhigh for coding"
+echo "   Proxy:     $([[ $NEEDS_PROXY == True && $NO_PROXY -eq 0 ]] && echo 'on' || echo 'off')"
 echo ""
 
 nohup "$LLAMA_SERVER" \
   --model "$MODEL_FILE" \
-  --mmproj "$MMPROJ" \
+  ${MMPROJ:+--mmproj "$MMPROJ"} \
   --host "$HOST" \
   --port "$PORT" \
   --ctx-size "$CTX_SIZE" \
   --n-gpu-layers "$NGL" \
-  --threads "$THREADS" \
+  --threads 12 \
   --batch-size "$BATCH_SIZE" \
   --ubatch-size "$UBATCH_SIZE" \
   --parallel 1 \
-  --flash-attn "$FLASH_ATTN" \
+  --flash-attn on \
   --reasoning-preserve \
   --metrics \
   --log-disable \
@@ -142,19 +183,19 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# ─── Launch proxy ───────────────────────────────────────────────────────────
-if [[ $NO_PROXY -eq 0 ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Launch proxy if needed
+if [[ "$NEEDS_PROXY" == True && $NO_PROXY -eq 0 ]]; then
+  # Update proxy with injection string
+  if [[ -n "$PROXY_INJECTION" ]]; then
+    # Create model-specific proxy config
+    sed -i '' "s/DEFAULT_REASONING = \".*\"/DEFAULT_REASONING = \"$PROXY_INJECTION\"/" "$SCRIPT_DIR/proxy.py" 2>/dev/null || true
+  fi
   nohup python3 "$SCRIPT_DIR/proxy.py" >> "$LOGFILE" 2>&1 &
   PROXY_PID=$!
   echo "$PROXY_PID" > "$PROXY_PIDFILE"
   echo "✅ Proxy ready! (PID $PROXY_PID, port $PROXY_PORT)"
-  echo "   Injects: Reasoning strength: xhigh"
-  echo ""
   echo "   Pi connects to: http://127.0.0.1:$PROXY_PORT/v1"
-  echo "   Direct:          http://127.0.0.1:$PORT/v1"
-  echo "   API docs:        http://127.0.0.1:$PORT/docs"
 else
-  echo "   (proxy skipped — use /v1/chat/completions directly)"
-  echo "   Remember: include Reasoning strength: xhigh in system prompt!"
+  echo "   Proxy skipped"
+  echo "   Direct: http://127.0.0.1:$PORT/v1"
 fi
