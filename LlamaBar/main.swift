@@ -1,7 +1,7 @@
 import AppKit
 import ServiceManagement
 
-private let scriptDir = NSHomeDirectory() + "/code/personal/llama-server"
+private let scriptDir = NSHomeDirectory() + "/code/personal/llama-bar"
 private let healthURL = "http://127.0.0.1:8080/health"
 private let metricsURL = "http://127.0.0.1:8080/metrics"
 

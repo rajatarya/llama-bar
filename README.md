@@ -47,8 +47,8 @@ While built for Muse-Glimmer-30B-BF16, the setup is model-agnostic:
 ```bash
 git clone <repo>
 cd llama-bar
-./MenuBar/build.sh
-open MenuBar/GlimmerBar.app
+./LlamaBar/build.sh
+open LlamaBar/GlimmerBar.app
 ```
 
 The app auto-registers as a login item on first launch.
@@ -64,7 +64,7 @@ The app auto-registers as a login item on first launch.
 
 ```
 llama-bar/
-├── MenuBar/              # Swift menu bar app
+├── LlamaBar/              # Swift menu bar app
 │   ├── main.swift        # Status item, menu, health checks
 │   └── build.sh          # Compile to .app bundle
 ├── start.sh              # Launch llama-server + proxy

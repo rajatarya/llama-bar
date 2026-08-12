@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/rajat/code/personal/llama-server/start.sh</string>
+        <string>/Users/rajat/code/personal/llama-bar/start.sh</string>
     </array>
 
     <key>RunAtLoad</key>

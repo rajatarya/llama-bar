@@ -1,4 +1,4 @@
-# GlimmerBar
+# LlamaBar
 
 Menu bar app for Muse-Glimmer-30B-BF16. Shows ● (running) or ○ (stopped).
 
@@ -11,7 +11,7 @@ Menu bar app for Muse-Glimmer-30B-BF16. Shows ● (running) or ○ (stopped).
 ## Install
 
 ```bash
-open GlimmerBar.app
+open LlamaBar.app
 ```
 
 Registers as login item. Rebuild and re-open to update.
