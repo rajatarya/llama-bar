@@ -1,3 +1,10 @@
+---
+title: Model Config-Driven Menu Bar
+date: 2026-08-12
+pr: https://github.com/rajatarya/llama-bar/pull/1
+status: merged
+---
+
 # Plan: Model Config-Driven Menu Bar
 
 ## Goal
