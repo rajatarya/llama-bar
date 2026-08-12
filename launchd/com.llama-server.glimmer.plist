@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.llama-server.glimmer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/rajat/code/personal/llama-server/start.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/rajat/.cache/llama-server-launch.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/rajat/.cache/llama-server-launch-err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/Users/rajat/code/hf/official-llama.cpp/build/bin</string>
+    </dict>
+</dict>
+</plist>
