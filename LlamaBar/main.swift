@@ -75,6 +75,17 @@ private func fmtDuration(_ secs: TimeInterval) -> String {
     return "\(m / 60)h \(m % 60)m"
 }
 
+private func formatModelDisplay(modelId: String, name: String) -> String {
+    // Parse modelId of form repo/model:quant
+    let parts = modelId.split(separator: ":", maxSplits: 1)
+    guard parts.count == 2 else { return "Model: \(name)" }
+    let repoPart = String(parts[0])
+    let quant = String(parts[1])
+    let repoName = repoPart.split(separator: "/").last.map(String.init) ?? repoPart
+    // Show name with repo and quantization for clarity
+    return "Model: \(name) • \(repoName) \(quant)"
+}
+
 // MARK: - State
 
 enum State {
@@ -132,7 +143,9 @@ func refresh() {
     
     // Update model list
     if let cfg = config {
-        modelItem.title = "Model: \(cfg.models[currentModelId]?.name ?? "Unknown")"
+        let modelId = currentModelId
+        let modelName = cfg.models[modelId]?.name ?? "Unknown"
+        modelItem.title = formatModelDisplay(modelId: modelId, name: modelName)
     }
     
     // Transition detection
