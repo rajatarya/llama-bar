@@ -1,0 +1,15 @@
+{
+  "default_model": "unsloth/Muse-Glimmer-30B-GGUF:BF16",
+  "models": {
+    "unsloth/Muse-Glimmer-30B-GGUF:BF16": {
+      "name": "Muse-Glimmer-30B-BF16",
+      "ctx_size": 131072,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": true,
+      "proxy_injection": "Reasoning strength: xhigh",
+      "description": "Coding and analysis, 30B BF16. ctx capped at 131072 (training context)."
+    }
+  }
+}
