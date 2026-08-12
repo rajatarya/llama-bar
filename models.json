@@ -30,6 +30,16 @@
       "needs_proxy": true,
       "proxy_injection": "Reasoning strength: xhigh",
       "description": "Full precision baseline (10 tok/s)."
+    },
+    "unsloth/DeepSeek-V4-Flash-0731-GGUF:UD-Q2_K_XL": {
+      "name": "DeepSeek-V4-Flash-0731 UD-Q2_K_XL",
+      "ctx_size": 131072,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": false,
+      "proxy_injection": "",
+      "description": "DeepSeek-V4-Flash-0731, UD-Q2_K_XL quant ~90 GB"
     }
   }
 }

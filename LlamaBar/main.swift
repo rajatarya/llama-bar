@@ -4,6 +4,7 @@ import ServiceManagement
 private let scriptDir = NSHomeDirectory() + "/code/personal/llama-bar"
 private let configPath = NSHomeDirectory() + "/code/personal/llama-bar/models.json"
 private let healthURL = "http://127.0.0.1:8080/health"
+private let propsURL = "http://127.0.0.1:8080/props"
 private let metricsURL = "http://127.0.0.1:8080/metrics"
 
 // MARK: - Model Config
@@ -55,6 +56,25 @@ private func discoverModels() -> [String] {
 private func healthy() -> Bool {
     sh("/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "2", healthURL)?
         .trimmingCharacters(in: .whitespacesAndNewlines) == "200"
+}
+
+/// Return the model ID (repo:quant) whose quant string appears in the
+/// loaded model filename, or nil if the server isn't serving or the model
+/// is not one we know about.
+private func runningModelId() -> String? {
+    guard let cfg = config,
+          let text = sh("/usr/bin/curl", "-s", "--max-time", "2", propsURL),
+          let data = text.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let modelPath = json["model_path"] as? String else { return nil }
+    let base = (modelPath as NSString).lastPathComponent.lowercased()
+    for (id, _) in cfg.models {
+        if let quant = id.split(separator: ":").last?.lowercased(),
+           base.contains(quant) {
+            return id
+        }
+    }
+    return nil
 }
 
 private func metric(_ name: String) -> Double? {
@@ -139,6 +159,11 @@ func refresh() {
         if let cfg = config, currentModelId.isEmpty {
             currentModelId = cfg.default_model
         }
+    }
+    
+    // Sync to the model actually loaded by llama-server, if it's one of ours
+    if ok, let runningId = runningModelId() {
+        currentModelId = runningId
     }
     
     // Update model list
