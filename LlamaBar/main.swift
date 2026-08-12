@@ -125,10 +125,12 @@ func refresh() {
     // Load config if needed
     if config == nil {
         config = loadConfig()
+        if let cfg = config, currentModelId.isEmpty {
+            currentModelId = cfg.default_model
+        }
     }
     
     // Update model list
-    let models = discoverModels()
     if let cfg = config {
         modelItem.title = "Model: \(cfg.models[currentModelId]?.name ?? "Unknown")"
     }
@@ -146,7 +148,7 @@ func refresh() {
     case .starting(let t0):
         if ok { state = .running(startedAt: Date()) }
         else if Date().timeIntervalSince(t0) > 120 { state = .stopped }
-    case .running(let t0):
+    case .running:
         if !ok { state = .stopped }
     }
     
@@ -192,6 +194,7 @@ let startTarget = Target {
         run(["/bin/bash", "-c", "\(scriptDir)/start.sh"])
     }
     state = .starting(startedAt: Date())
+    refresh()
 }
 let stopTarget = Target {
     run(["/bin/bash", "-c", "\(scriptDir)/stop.sh"])
@@ -205,6 +208,12 @@ timer.tolerance = 1
 RunLoop.current.add(timer, forMode: .common)
 
 refresh()
+
+// Auto-start the default model on launch if the server is down
+if !healthy() {
+    startTarget.run()
+}
+
 try? SMAppService.mainApp.register()
 
 app.run()
