@@ -1,15 +1,35 @@
 {
-  "default_model": "unsloth/Muse-Glimmer-30B-GGUF:BF16",
+  "default_model": "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M",
   "models": {
-    "unsloth/Muse-Glimmer-30B-GGUF:BF16": {
-      "name": "Muse-Glimmer-30B-BF16",
+    "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M": {
+      "name": "Muse-Glimmer-30B Q4_K_M",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
       "ubatch_size": 256,
       "needs_proxy": true,
       "proxy_injection": "Reasoning strength: xhigh",
-      "description": "Coding and analysis, 30B BF16. ctx capped at 131072 (training context)."
+      "description": "Coding and analysis. Q4_K_M: 2.8x faster than BF16 (28 tok/s)."
+    },
+    "bartowski/Muse-Glimmer-30B-GGUF:Q5_K_M": {
+      "name": "Muse-Glimmer-30B Q5_K_M",
+      "ctx_size": 131072,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": true,
+      "proxy_injection": "Reasoning strength: xhigh",
+      "description": "Higher quality than Q4, 2.2x faster than BF16 (22 tok/s)."
+    },
+    "unsloth/Muse-Glimmer-30B-GGUF:BF16": {
+      "name": "Muse-Glimmer-30B BF16",
+      "ctx_size": 131072,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": true,
+      "proxy_injection": "Reasoning strength: xhigh",
+      "description": "Full precision baseline (10 tok/s)."
     }
   }
 }

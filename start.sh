@@ -98,29 +98,58 @@ if [[ "${SHORT_CTX_FLAG:-0}" -eq 1 ]]; then
   CTX_SIZE=$SHORT_CTX
 fi
 
-# Resolve model file path from HF cache
-MODEL_FILE=$(python3 -c "
-import os, json
+# Resolve model file path from HF cache by scanning for matching GGUF files
+MODEL_FILE=""
+MMPROJ=""
+if [[ "$MODEL_ID" == *":BF16"* ]]; then
+  # Sharded BF16: find all shards in the snapshot, build list
+  MODELS_DIR=$(python3 -c "
+import os
 model_id = '$MODEL_ID'
-# Convert model ID to cache path
-# unsloth/Muse-Glimmer-30B-GGUF:BF16 -> models--unsloth--Muse-Glimmer-30B-GGUF
-parts = model_id.split(':')
-repo = parts[0]
-quant = parts[1] if len(parts) > 1 else 'Q4_K_M'
+repo = model_id.split(':')[0]
 cache_base = os.path.expanduser('~/.cache/huggingface/hub')
-# Find the model directory
-import glob
-pattern = os.path.join(cache_base, f'models--*')
-matches = glob.glob(pattern)
-# Simplified: assume model file is in BF16 or first subdir
-# This is a simplification - in practice you'd need better resolution
-print('$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/BF16/Muse-Glimmer-30B-BF16-00001-of-00002.gguf')
-" 2>/dev/null || echo "")
-
-# For now, use hardcoded path for Glimmer (will be improved)
-if [[ "$MODEL_ID" == *"Muse-Glimmer"* ]]; then
-  MODEL_FILE="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/BF16/Muse-Glimmer-30B-BF16-00001-of-00002.gguf"
-  MMPROJ="$HOME/.cache/huggingface/hub/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/faa5b025c584459c13febfa5c59883516710ae39/mmproj-Muse-Glimmer-30B-BF16.gguf"
+# Convert repo to cache dir name: unsloth/Muse-Glimmer-30B-GGUF -> models--unsloth--Muse-Glimmer-30B-GGUF
+cache_dir = os.path.join(cache_base, 'models--' + repo.replace('/', '--'))
+print(cache_dir if os.path.isdir(cache_dir) else '')
+")
+  if [[ -n "$MODELS_DIR" ]]; then
+    SNAP=$(ls -d "$MODELS_DIR"/snapshots/*/ | head -1)
+    MODEL_FILE=$(find "$SNAP" -name "*.gguf" ! -name "*mmproj*" | sort | head -1)
+    MMPROJ=$(find "$MODELS_DIR" -name "mmproj*" ! -name "*.incomplete" | head -1)
+  fi
+else
+  # Single-file quant: find the GGUF matching the model ID quant, prefer largest
+  MODEL_FILE=$(python3 -c "
+import os, glob
+model_id = '$MODEL_ID'
+repo = model_id.split(':')[0]
+quant = model_id.split(':')[1] if ':' in model_id else ''
+cache_base = os.path.expanduser('~/.cache/huggingface/hub')
+cache_dir = os.path.join(cache_base, 'models--' + repo.replace('/', '--'))
+best = ''
+best_size = 0
+for snap in glob.glob(os.path.join(cache_dir, 'snapshots', '*')):
+    for f in glob.glob(os.path.join(snap, '**', '*.gguf'), recursive=True):
+        if 'mmproj' in f.lower(): continue
+        base = os.path.basename(f)
+        if quant and quant.lower() in base.lower():
+            sz = os.path.getsize(f)
+            if sz > best_size:
+                best = f; best_size = sz
+print(best)
+")
+  MMPROJ=$(python3 -c "
+import os, glob
+model_id = '$MODEL_ID'
+repo = model_id.split(':')[0]
+cache_base = os.path.expanduser('~/.cache/huggingface/hub')
+cache_dir = os.path.join(cache_base, 'models--' + repo.replace('/', '--'))
+for snap in glob.glob(os.path.join(cache_dir, 'snapshots', '*')):
+    for f in glob.glob(os.path.join(snap, '**', 'mmproj*'), recursive=True):
+        if not f.endswith('.incomplete'):
+            print(f); exit()
+print('')
+")
 fi
 
 if [[ ! -f "$MODEL_FILE" ]]; then
