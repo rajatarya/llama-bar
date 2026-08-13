@@ -1,7 +1,7 @@
 ---
 title: Menu Bar Model Picker
 date: 2026-08-12
-status: in-progress
+status: implemented
 branch: feat/menu-bar-model-picker
 ---
 
