@@ -34,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --port)                 PORT="$2";         shift 2 ;;
     --short)                SHORT_CTX_FLAG=1;  shift 1 ;;
     --no-proxy)             NO_PROXY=1;        shift 1 ;;
+    --dry-run)              DRY_RUN=1;         shift 1 ;;
     --list)                 LIST_MODE=1;       shift 1 ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --list            List available models"
       echo "  --short           Use lightweight context (8192)"
       echo "  --no-proxy        Skip proxy startup"
+      echo "  --dry-run         Resolve + print launch plan, launch nothing"
       echo "  --port PORT       Server port (default: 8080)"
       exit 0
       ;;
@@ -187,6 +189,30 @@ fi
 if [[ -n "$DRAFT_MODEL" && ! -f "$DRAFT_MODEL" ]]; then
   echo "⚠️  Draft model not found, continuing without DSpark: $DRAFT_MODEL"
   DRAFT_MODEL=""
+fi
+
+# ─── Dry run: print resolved launch plan, launch nothing ───────────────────
+if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+  echo "DRY-RUN model=$MODEL_ID"
+  echo "MODEL_FILE=$MODEL_FILE"
+  echo "MMPROJ=$MMPROJ"
+  echo "CTX_SIZE=$CTX_SIZE"
+  echo "NGL=$NGL BATCH_SIZE=$BATCH_SIZE UBATCH_SIZE=$UBATCH_SIZE"
+  echo "PROXY=$NEEDS_PROXY"
+  echo "PROXY_INJECTION=$PROXY_INJECTION"
+  echo "DRAFT_MODEL=$DRAFT_MODEL"
+  echo "SPEC_TYPE=$SPEC_TYPE REASONING=$REASONING TEMPLATE=$TEMPLATE_KWARGS TEMP=$TEMP TOP_P=$TOP_P MIN_P=$MIN_P"
+  echo "COMMAND=$LLAMA_SERVER --model $MODEL_FILE" \
+       "${MMPROJ:+--mmproj $MMPROJ} --host $HOST --port $PORT" \
+       "--ctx-size $CTX_SIZE --n-gpu-layers $NGL --threads 12" \
+       "--batch-size $BATCH_SIZE --ubatch-size $UBATCH_SIZE --parallel 1 --flash-attn on" \
+       "${DRAFT_MODEL:+--spec-draft-model $DRAFT_MODEL --spec-draft-n-max 3}" \
+       "${SPEC_TYPE:+--spec-type $SPEC_TYPE}" \
+       "${REASONING:+--reasoning $REASONING}" \
+       "${TEMPLATE_KWARGS:+--chat-template-kwargs $TEMPLATE_KWARGS}" \
+       "${TEMP:+--temp $TEMP} ${TOP_P:+--top-p $TOP_P} ${MIN_P:+--min-p $MIN_P}" \
+       "--reasoning-preserve --metrics --log-disable"
+  exit 0
 fi
 
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
