@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 APP="$PWD/LlamaBar.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -o "$APP/Contents/MacOS/LlamaBar" main.swift
+swiftc -O -o "$APP/Contents/MacOS/LlamaBar" main.swift ModelLogic.swift
 cat > "$APP/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

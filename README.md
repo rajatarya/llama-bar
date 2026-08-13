@@ -7,6 +7,7 @@ A macOS menu bar app for managing local llama-server instances with automatic st
 **llama-bar** is a lightweight menu bar utility that lets you run, monitor, and control local Large Language Model servers directly from your macOS menu bar. It provides:
 
 - **One-click start/stop** for llama-server instances
+- **Model picker** — browse your locally configured models from the menu bar and switch with one click (stop + restart)
 - **Visual status** with live uptime, tokens/sec, and slot usage
 - **Automatic startup** on login
 - **Reasoning proxy** that injects model-specific system prompts (e.g., "Reasoning strength: xhigh") so pi and other OpenAI-compatible clients work seamlessly with reasoning models
@@ -19,6 +20,7 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 ### Menu Bar App
 - ● Green dot = running, ○ grey = stopped, ◐ spinning = starting
 - Click to open menu with start/stop/quit controls
+- **Models ▸** submenu lists everything in `models.json`; ✓ marks the loaded model, clicking another one switches to it
 - Live stats from Prometheus metrics endpoint
 - Audible notification when model loads
 - Auto-starts server on launch, registers as login item
@@ -66,7 +68,9 @@ The app auto-registers as a login item on first launch.
 llama-bar/
 ├── LlamaBar/              # Swift menu bar app
 │   ├── main.swift        # Status item, menu, health checks
+│   ├── ModelLogic.swift  # Pure config/switching logic (unit-testable)
 │   └── build.sh          # Compile to .app bundle
+├── run_tests.sh          # One-command test suite
 ├── start.sh              # Launch llama-server + proxy
 ├── stop.sh               # Stop services
 ├── status.sh             # Health check
@@ -74,6 +78,15 @@ llama-bar/
 ├── launchd/              # LaunchAgent for headless use
 ├── BENCHMARK.md          # Performance benchmarks
 └── README.md
+
+## Tests
+
+```bash
+./run_tests.sh
+```
+
+Runs config, discovery, start.sh (including `--dry-run` resolution of every
+model), and the Swift model-logic tests.
 ```
 
 ## Performance
