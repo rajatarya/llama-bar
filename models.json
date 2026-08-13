@@ -39,7 +39,14 @@
       "ubatch_size": 256,
       "needs_proxy": false,
       "proxy_injection": "",
-      "description": "DeepSeek-V4-Flash-0731, UD-Q2_K_XL quant ~90 GB"
+      "draft_model": "auto",
+      "spec_type": "draft-dspark",
+      "reasoning": "on",
+      "chat_template_kwargs": "{\"reasoning_effort\":\"high\"}",
+      "temp": 1.0,
+      "top_p": 0.95,
+      "min_p": 0.01,
+      "description": "DeepSeek-V4-Flash-0731, UD-Q2_K_XL ~90 GB, DSpark draft + think-high defaults"
     }
   }
 }

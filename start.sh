@@ -84,14 +84,22 @@ if [[ "$MODEL_CONFIG" == *"ERROR"* ]]; then
   exit 1
 fi
 
-# Parse config values
-MODEL_NAME=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['name'])")
-CTX_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ctx_size'])")
-NGL=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ngl'])")
-BATCH_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['batch_size'])")
-UBATCH_SIZE=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG')['ubatch_size'])")
-NEEDS_PROXY=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG').get('needs_proxy', False))")
-PROXY_INJECTION=$(python3 -c "import json; print(json.loads('$MODEL_CONFIG').get('proxy_injection', ''))")
+# Parse config values (via env var to avoid shell-escaping issues)
+export MODEL_CONFIG
+MODEL_NAME=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['name'])")
+CTX_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ctx_size'])")
+NGL=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ngl'])")
+BATCH_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['batch_size'])")
+UBATCH_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ubatch_size'])")
+NEEDS_PROXY=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('needs_proxy', False))")
+PROXY_INJECTION=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('proxy_injection', ''))")
+DRAFT_MODEL=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('draft_model', ''))")
+SPEC_TYPE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('spec_type', ''))")
+REASONING=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('reasoning', ''))")
+TEMPLATE_KWARGS=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('chat_template_kwargs', ''))")
+TEMP=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('temp', ''))")
+TOP_P=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('top_p', ''))")
+MIN_P=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('min_p', ''))")
 
 # Apply short context override
 if [[ "${SHORT_CTX_FLAG:-0}" -eq 1 ]]; then
@@ -156,6 +164,31 @@ if [[ ! -f "$MODEL_FILE" ]]; then
   exit 1
 fi
 
+# Resolve DSpark drafter (speculative decoding): 'auto' scans HF cache for a
+# llama.cpp-standardized dflash GGUF (e.g. ...-dflash.gguf)
+if [[ "$DRAFT_MODEL" == "auto" ]]; then
+  DRAFT_MODEL=$(python3 -c "
+import os, glob
+cache = os.path.expanduser('~/.cache/huggingface/hub')
+# Prefer llama.cpp-standardized drafter with a real vocab (mask token required
+# by DSpark). GaelicThunder's 'mainline' file carries tokenizer.ggml.mask_token_id
+# with gpt2 vocab; no-vocab drafters (tokenizer.ggml.model=none) fail silently.
+cands = []
+for snap in glob.glob(os.path.join(cache, 'models--*', 'snapshots', '*')):
+    for f in glob.glob(os.path.join(snap, '**', '*.gguf'), recursive=True):
+        if f.endswith('.incomplete'): continue
+        if 'dflash' in os.path.basename(f).lower():
+            cands.append(f)
+if cands:
+    cands.sort(key=lambda f: (0 if 'mainline' in os.path.basename(f).lower() else 1, os.path.getmtime(f)))
+    print(cands[0])
+")
+fi
+if [[ -n "$DRAFT_MODEL" && ! -f "$DRAFT_MODEL" ]]; then
+  echo "⚠️  Draft model not found, continuing without DSpark: $DRAFT_MODEL"
+  DRAFT_MODEL=""
+fi
+
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
 if [[ ! -x "$LLAMA_SERVER" ]]; then
   echo "❌ llama-server not found"
@@ -180,6 +213,10 @@ echo "   Context:   $CTX_SIZE"
 echo "   GPU Lrs:   $NGL"
 echo "   Batch:     $BATCH_SIZE / $UBATCH_SIZE"
 echo "   Proxy:     $([[ $NEEDS_PROXY == True && $NO_PROXY -eq 0 ]] && echo 'on' || echo 'off')"
+echo "   DSpark:    $([[ -n $DRAFT_MODEL ]] && echo "on ($DRAFT_MODEL)" || echo 'off')"
+echo "   Reasoning: ${REASONING:-auto}"
+echo "   Template:  ${TEMPLATE_KWARGS:-default}"
+echo "   Sampling:  ${TEMP:-default} / top-p ${TOP_P:-default} / min-p ${MIN_P:-default}"
 echo ""
 
 nohup "$LLAMA_SERVER" \
@@ -194,6 +231,13 @@ nohup "$LLAMA_SERVER" \
   --ubatch-size "$UBATCH_SIZE" \
   --parallel 1 \
   --flash-attn on \
+  ${DRAFT_MODEL:+--spec-draft-model "$DRAFT_MODEL" --spec-draft-n-max 3} \
+  ${SPEC_TYPE:+--spec-type "$SPEC_TYPE"} \
+  ${REASONING:+--reasoning "$REASONING"} \
+  ${TEMPLATE_KWARGS:+--chat-template-kwargs "$TEMPLATE_KWARGS"} \
+  ${TEMP:+--temp "$TEMP"} \
+  ${TOP_P:+--top-p "$TOP_P"} \
+  ${MIN_P:+--min-p "$MIN_P"} \
   --reasoning-preserve \
   --metrics \
   --log-disable \
