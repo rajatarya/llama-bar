@@ -1,7 +1,29 @@
 {
-  "default_model": "unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS",
-  "_comment": "Tuning overrides only. The model list comes from llama-server --cache-list (discover_models.sh). Any cached model not listed here still appears in the menu and launches with llama-fit-params-computed ctx/ngl.",
+  "default_model": "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX",
+  "_comment": "Tuning overrides only. The model list comes from llama-server --cache-list plus installed MTPLX packs (discover_models.sh). Any cached model not listed here still appears in the menu and launches with llama-fit-params-computed ctx/ngl. backend: llamacpp (default) or mtplx (ids ending :MTPLX); mtplx honours ctx_size, reasoning, temp, top_p, top_k.",
   "models": {
+    "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX": {
+      "name": "Qwen3.8-Flash-Next (MTPLX)",
+      "backend": "mtplx",
+      "ctx_size": 262144,
+      "needs_proxy": false,
+      "reasoning": "off",
+      "temp": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "description": "Qwen3.8-Flash-Next 125B MoE on MTPLX (MLX + native MTP, dynamic 4-bit). ~95 tok/s at 4K, ~76 at 22K context on this M5 Max (2026-09-25 bench). Instruct mode: temp 0.7, top_p 0.80, top_k 20."
+    },
+    "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality:MTPLX": {
+      "name": "Qwen3.8-27B (MTPLX)",
+      "backend": "mtplx",
+      "ctx_size": 262144,
+      "needs_proxy": false,
+      "reasoning": "off",
+      "temp": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "description": "Qwen3.8-27B dense on MTPLX (8-bit, 99.3% top-1 vs BF16, native MTP). ~51 tok/s at 4K, ~46 at 22K context (2026-09-25 bench). Instruct mode."
+    },
     "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M": {
       "name": "Muse-Glimmer-30B Q4_K_M",
       "ctx_size": 131072,
@@ -32,7 +54,7 @@
       "proxy_injection": "Reasoning strength: xhigh",
       "description": "Full precision baseline (10 tok/s)."
     },
-    "unsloth/DeepSeek-V4-Flash-0731-GGUF:UD-Q2_K_XL": {
+    "unsloth/DeepSeek-V4-Flash-0731-GGUF:Q2_K_XL": {
       "name": "DeepSeek-V4-Flash-0731 UD-Q2_K_XL",
       "ctx_size": 131072,
       "ngl": 64,

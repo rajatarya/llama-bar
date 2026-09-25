@@ -80,6 +80,42 @@ struct TestRunner {
         // Configured models that are NOT cached stay hidden.
         check(!menu.contains("vcruz305/DeepSeek-V4.1-Flash-GGUF:Q2_K"), "uncached config-only model hidden")
 
+        // MARK: MTPLX backend
+
+        let fnMtplx = "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX"
+        let q27Mtplx = "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality:MTPLX"
+        let fnGguf = "unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS"
+        let mixed = [fnMtplx, q27Mtplx, fnGguf, q4]
+        // MTPLX has no /props; its /health model_path is the pack directory.
+        check(cfg.modelId(forRunningPath: "/Users/x/.mtplx/models/Youssofal--Qwen3.8-Flash-Next-MTPLX-Optimized-Speed", candidates: mixed) == fnMtplx,
+              "resolves MTPLX pack from /health model_path")
+        check(cfg.modelId(forRunningPath: "/Users/x/.mtplx/models/Youssofal--Qwen3.8-27B-MTPLX-Optimized-Quality/", candidates: mixed) == q27Mtplx,
+              "picks the right MTPLX pack (trailing slash ok)")
+        check(cfg.modelId(forRunningPath: "/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/x/UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf", candidates: mixed) == fnGguf,
+              "GGUF path still resolves to the GGUF id alongside MTPLX ids")
+        check(cfg.modelId(forRunningPath: "/Users/x/.mtplx/models/Someone--Unknown-MTPLX-Pack", candidates: mixed) == nil,
+              "unknown MTPLX pack → nil (\":MTPLX\" never quant-matches)")
+        check(cfg.displayTitle(for: fnMtplx).hasSuffix("MTPLX"), "MTPLX title shows backend tag")
+
+        // Entries only need a name; llama.cpp tuning fields are optional.
+        let minimal = #"{"default_model":"a:MTPLX","models":{"a:MTPLX":{"name":"A","backend":"mtplx"}}}"#
+        let minCfg = try? JSONDecoder().decode(ModelsConfig.self, from: Data(minimal.utf8))
+        check(minCfg?.models["a:MTPLX"]?.backend == "mtplx", "entry with only name + backend decodes")
+
+        // MARK: tok/s parsing (llama.cpp Prometheus text and MTPLX JSON)
+
+        let prom = """
+        # HELP llamacpp:predicted_tokens_seconds Average generation throughput in tokens/s.
+        # TYPE llamacpp:predicted_tokens_seconds gauge
+        llamacpp:predicted_tokens_seconds 42.5
+        llamacpp:prompt_tokens_seconds 700
+        """
+        check(parseDecodeTokensPerSecond(prom) == 42.5, "parses llama.cpp Prometheus tok/s")
+        let mtplxMetrics = #"{"latest":{"decode_tok_s":30.0,"display_decode_tok_s":31.5},"recent":[]}"#
+        check(parseDecodeTokensPerSecond(mtplxMetrics) == 31.5, "parses MTPLX JSON tok/s")
+        check(parseDecodeTokensPerSecond(#"{"latest":null,"recent":[]}"#) == nil, "MTPLX before first request → nil")
+        check(parseDecodeTokensPerSecond("garbage") == nil, "garbage metrics → nil")
+
         if failures == 0 {
             print("✅ All model logic tests passed")
             exit(0)

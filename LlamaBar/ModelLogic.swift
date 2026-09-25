@@ -6,13 +6,16 @@ import Foundation
 // MARK: - Model config
 
 /// One entry of models.json. Unknown keys (draft_model, temp, …) are ignored.
+/// Only name is required: entries are tuning overrides, and MTPLX entries have
+/// no llama.cpp tuning at all.
 struct ModelConfig: Codable {
     let name: String
-    let ctx_size: Int
-    let ngl: Int
-    let batch_size: Int
-    let ubatch_size: Int
-    let needs_proxy: Bool
+    let backend: String?     // "llamacpp" (default) or "mtplx"
+    let ctx_size: Int?
+    let ngl: Int?
+    let batch_size: Int?
+    let ubatch_size: Int?
+    let needs_proxy: Bool?
     let proxy_injection: String?
     let description: String?
 }
@@ -37,12 +40,20 @@ struct ModelsConfig: Codable {
     }
 
 
-    /// Match a llama-server model_path to one of the available ids by quant
-    /// (e.g. …/ggml-model-q4_k_m.gguf → bartowski/…:Q4_K_M). nil if unknown.
+    /// Match a server's model_path to one of the available ids. MTPLX reports
+    /// its pack directory (…/owner--repo), matched exactly; llama-server
+    /// reports a GGUF, matched by quant (…/ggml-model-q4_k_m.gguf →
+    /// bartowski/…:Q4_K_M). nil if unknown.
     func modelId(forRunningPath path: String, candidates: [String]) -> String? {
         let base = (path as NSString).lastPathComponent.lowercased()
+        let ids = menuModelIDs(discovered: candidates)
+        let isMtplx = { (id: String) in id.hasSuffix(":MTPLX") }
+        for id in ids where isMtplx(id) {
+            let repo = id.dropLast(":MTPLX".count)
+            if base == repo.replacingOccurrences(of: "/", with: "--").lowercased() { return id }
+        }
         // Longest id first so ":Q4_K_M" never steals a ":Q4_K_M_XL" path.
-        for id in menuModelIDs(discovered: candidates).sorted(by: { $0.count > $1.count }) {
+        for id in ids.filter({ !isMtplx($0) }).sorted(by: { $0.count > $1.count }) {
             if let quant = id.split(separator: ":").last?.lowercased(),
                base.contains(quant) {
                 return id
@@ -67,6 +78,21 @@ func parseDiscoveredModels(_ json: String) -> Set<String> {
     guard let data = json.data(using: .utf8),
           let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
     return Set(list)
+}
+
+// MARK: - Throughput
+
+/// Generation tok/s from a server's /metrics body: llama-server's Prometheus
+/// gauge, or MTPLX's JSON (latest request's decode speed). nil if absent.
+func parseDecodeTokensPerSecond(_ body: String) -> Double? {
+    let gauge = "llamacpp:predicted_tokens_seconds"
+    for line in body.components(separatedBy: "\n") where line.hasPrefix(gauge) {
+        if let val = line.split(separator: " ").last { return Double(val) }
+    }
+    guard let data = body.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let latest = json["latest"] as? [String: Any] else { return nil }
+    return (latest["display_decode_tok_s"] ?? latest["decode_tok_s"]) as? Double
 }
 
 // MARK: - Switching decision

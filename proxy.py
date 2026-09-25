@@ -65,6 +65,9 @@ def _matches_loaded(hf_model_id: str, loaded_path: str) -> bool:
     """
     if not loaded_path:
         return False
+    if _hf_quant(hf_model_id).upper() == "MTPLX":
+        # mtplx serve reports the pack directory, e.g. ~/.mtplx/models/<owner>--<repo>.
+        return os.path.basename(loaded_path.rstrip("/")) == _hf_repo(hf_model_id).replace("/", "--")
     m = re.search(r"models--([^/]+)--(.+)/snapshots/(.+)", loaded_path)
     if not m:
         return os.path.basename(loaded_path) == hf_model_id
@@ -92,11 +95,16 @@ def discover_models():
 def catalog_models():
     """OpenAI-style /v1/models payload: cache-discovered models + live server."""
     loaded_path = ""
-    try:
-        with urllib.request.urlopen(f"{UPSTREAM}/props", timeout=2) as r:
-            loaded_path = json.load(r).get("model_path", "") or ""
-    except Exception:
-        pass  # server down — advertise catalog without a loaded model
+    # llama-server reports model_path on /props; mtplx serve has no /props but
+    # reports it on /health.
+    for endpoint in ("/props", "/health"):
+        try:
+            with urllib.request.urlopen(f"{UPSTREAM}{endpoint}", timeout=2) as r:
+                loaded_path = json.load(r).get("model_path", "") or ""
+        except Exception:
+            continue  # server down or endpoint missing
+        if loaded_path:
+            break
 
     with open(MODELS_FILE) as f:
         cfg = json.load(f)

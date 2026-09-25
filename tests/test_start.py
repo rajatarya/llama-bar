@@ -33,16 +33,48 @@ def test_start_dry_run_all_models():
         assert result.returncode == 0, (
             f"dry-run failed for {model_id}:\n{result.stdout}\n{result.stderr}")
         assert 'DRY-RUN' in result.stdout, f"dry-run marker missing for {model_id}"
+        plan = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line
+                    and not line.startswith('DRY-RUN'))
+
+        if plan.get('BACKEND') == 'mtplx':
+            # MTPLX packs are directories in MTPLX's model store, served by `mtplx serve`.
+            assert os.path.isdir(plan.get('MODEL_DIR', '')), \
+                f"MODEL_DIR not on disk for {model_id}: {plan.get('MODEL_DIR')}"
+            assert ' serve --model ' in plan.get('COMMAND', ''), \
+                f"mtplx command missing for {model_id}:\n{result.stdout}"
+            continue
 
         # MODEL_FILE=... must resolve to a file that exists on disk
-        model_file = next(
-            (line.split('=', 1)[1] for line in result.stdout.splitlines()
-             if line.startswith('MODEL_FILE=')), '')
+        model_file = plan.get('MODEL_FILE', '')
         assert model_file, f"MODEL_FILE empty for {model_id}:\n{result.stdout}"
         assert os.path.isfile(model_file), \
             f"MODEL_FILE not on disk for {model_id}: {model_file}"
 
     print(f"✓ dry-run resolves all {len(discovered)} available models")
+    return True
+
+
+def test_start_dry_run_mtplx():
+    """MTPLX ids launch `mtplx serve` on LlamaBar's port, never llama-server."""
+    import json
+    script_path = os.path.join(os.path.dirname(__file__), '..', 'start.sh')
+    out = subprocess.run(['bash', script_path, '--list'], capture_output=True, text=True)
+    mtplx_ids = [m for m in json.loads(out.stdout.strip()) if m.endswith(':MTPLX')]
+    if not mtplx_ids:
+        print("- no MTPLX packs installed; skipping MTPLX dry-run")
+        return True
+
+    for model_id in mtplx_ids:
+        result = subprocess.run(['bash', script_path, '--model', model_id, '--dry-run'],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, f"dry-run failed for {model_id}:\n{result.stdout}"
+        command = next(l for l in result.stdout.splitlines() if l.startswith('COMMAND='))
+        repo = model_id.rsplit(':', 1)[0]
+        assert f'serve --model {repo} ' in command, command
+        assert '--port 8080' in command and '--no-auth' in command, command
+        assert 'llama-server' not in command, command
+
+    print(f"✓ dry-run launches mtplx serve for {len(mtplx_ids)} MTPLX packs")
     return True
 
 
@@ -88,6 +120,7 @@ if __name__ == '__main__':
         test_start_help()
         test_start_list()
         test_start_dry_run_all_models()
+        test_start_dry_run_mtplx()
         test_start_dry_run_default()
         print("\nAll start.sh tests passed!")
         sys.exit(0)
