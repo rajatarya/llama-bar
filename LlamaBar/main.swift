@@ -33,7 +33,7 @@ private func runningModelId(_ cfg: ModelsConfig) -> String? {
           let data = text.data(using: .utf8),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let modelPath = json["model_path"] as? String else { return nil }
-    return cfg.modelId(forRunningPath: modelPath)
+    return cfg.modelId(forRunningPath: modelPath, candidates: discovered)
 }
 
 private func metric(_ name: String) -> Double? {
@@ -105,22 +105,30 @@ var state: State = .stopped
 var lastWasRunning = false
 var currentModelId: String = ""
 var config: ModelsConfig?
+var discovered: [String] = []
 var modelSubmenuFingerprint = ""
 // NSMenuItem.target is weak, so keep strong refs to keep menu actions alive.
 var modelTargets: [String: Target] = [:]
 
-/// Rebuild the Models submenu only when the selection or config changed, so the
-/// 2s refresh loop never flickers an open menu.
+/// Model IDs available to llama-server (HF cache), via discover_models.sh.
+func discoverModels() -> [String] {
+    guard let out = sh("/bin/bash", "-c", "\(scriptDir)/discover_models.sh") else { return [] }
+    return Array(parseDiscoveredModels(out)).sorted()
+}
+
+/// Rebuild the Models submenu only when the selection or available set changed,
+/// so the 2s refresh loop never flickers an open menu.
 func rebuildModelSubmenuIfNeeded() {
-    let fingerprint = "\(currentModelId)|\(config == nil)"
+    let ids = config?.menuModelIDs(discovered: discovered) ?? []
+    let fingerprint = "\(currentModelId)|\(ids)"
     guard fingerprint != modelSubmenuFingerprint else { return }
     modelSubmenuFingerprint = fingerprint
     modelMenu.removeAllItems()
     modelTargets.removeAll()
-    guard let cfg = config else { return }
-    for id in cfg.sortedModelIDs() {
-        let mi = NSMenuItem(title: cfg.models[id]?.name ?? id, action: nil, keyEquivalent: "")
-        mi.toolTip = cfg.models[id]?.description
+    guard config != nil || !discovered.isEmpty else { return }
+    for id in ids {
+        let mi = NSMenuItem(title: config?.models[id]?.name ?? id, action: nil, keyEquivalent: "")
+        mi.toolTip = config?.models[id]?.description
         if id == currentModelId { mi.state = .on }
         let target = Target { selectModel(id) }
         modelTargets[id] = target
@@ -159,9 +167,13 @@ func selectModel(_ modelId: String) {
 func refresh() {
     let ok = healthy()
 
-    // Load config once; the first load pins the default model as current.
+    // Load config + cache scan once; the first load pins the default model.
+    // The cache list only changes when models are downloaded, so a single
+    // scan (plus re-scan on server transitions) beats spawning llama-server
+    // every 2s.
     if config == nil {
         config = ModelsConfig.load(from: configPath)
+        discovered = discoverModels()
         if let cfg = config, currentModelId.isEmpty {
             currentModelId = cfg.default_model
         }
@@ -179,10 +191,9 @@ func refresh() {
         let switchingAllowed = !state.isStarting
         for mi in modelMenu.items { mi.isEnabled = switchingAllowed }
     }
-
-    // Transition detection
     if ok && !lastWasRunning {
         NSSound(named: "Glass")?.play()
+        discovered = discoverModels()
     }
     lastWasRunning = ok
 

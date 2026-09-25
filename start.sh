@@ -58,50 +58,45 @@ if [[ "${LIST_MODE:-0}" -eq 1 ]]; then
   exit 0
 fi
 
-# ─── Load config ─────────────────────────────────────────────────────────────
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "❌ Config file not found: $CONFIG_FILE"
+# ─── Load config (overrides only; model list comes from the cache) ─────────
+if [[ -z "$MODEL_ID" ]]; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    MODEL_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('default_model',''))")
+  fi
+fi
+if [[ -z "$MODEL_ID" ]]; then
+  echo "❌ No model specified and no default_model in $CONFIG_FILE"
   exit 1
 fi
 
-# Get default model if not specified
-if [[ -z "$MODEL_ID" ]]; then
-  MODEL_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['default_model'])")
-fi
-
-# Get model config
-MODEL_CONFIG=$(python3 -c "
-import json
-with open('$CONFIG_FILE') as f:
-    cfg = json.load(f)
-    model = cfg['models'].get('$MODEL_ID')
-    if not model:
-        print('ERROR: Model not found in config')
-        exit(1)
-    print(json.dumps(model))
+# Model config is optional tuning overrides; absent → empty (fit-params defaults).
+MODEL_CONFIG=$(MODEL_ID="$MODEL_ID" CONFIG_FILE="$CONFIG_FILE" python3 -c "
+import json, os
+path = os.environ['CONFIG_FILE']
+cfg = json.load(open(path)) if os.path.exists(path) else {}
+print(json.dumps(cfg.get('models', {}).get(os.environ['MODEL_ID'], {})))
 ")
 
-if [[ "$MODEL_CONFIG" == *"ERROR"* ]]; then
-  echo "❌ $MODEL_CONFIG"
-  exit 1
-fi
+# Parse config values (via env var to avoid shell-escaping issues). Empty
+# ctx_size/ngl signal "compute with llama-fit-params at launch".
+export MODEL_CONFIG MODEL_ID
+IFS='|' read -r -d '' -a FIELDS < <(python3 -c "
+import json, os
+m = json.loads(os.environ['MODEL_CONFIG'])
+fallback_name = os.environ['MODEL_ID'].split(':')[0].split('/')[-1]
+vals = [m.get('name') or fallback_name, m.get('ctx_size', ''), m.get('ngl', ''),
+        m.get('batch_size') or 256, m.get('ubatch_size') or 256,
+        m.get('needs_proxy', False), m.get('proxy_injection') or '',
+        m.get('draft_model') or '', m.get('spec_type') or '',
+        m.get('reasoning') or '', m.get('chat_template_kwargs') or '',
+        m.get('temp', ''), m.get('top_p', ''), m.get('top_k', ''),
+        m.get('min_p', ''), m.get('presence_penalty', ''),
+        m.get('repetition_penalty', '')]
+assert not any('|' in str(v) or '\n' in str(v) for v in vals), 'illegal delimiter in config value'
+print('|'.join(str(v) for v in vals), end='')
+") || true
+MODEL_NAME=${FIELDS[0]:-} CTX_SIZE=${FIELDS[1]:-} NGL=${FIELDS[2]:-} BATCH_SIZE=${FIELDS[3]:-256} UBATCH_SIZE=${FIELDS[4]:-256} NEEDS_PROXY=${FIELDS[5]:-False} PROXY_INJECTION=${FIELDS[6]:-} DRAFT_MODEL=${FIELDS[7]:-} SPEC_TYPE=${FIELDS[8]:-} REASONING=${FIELDS[9]:-} TEMPLATE_KWARGS=${FIELDS[10]:-} TEMP=${FIELDS[11]:-} TOP_P=${FIELDS[12]:-} TOP_K=${FIELDS[13]:-} MIN_P=${FIELDS[14]:-} PRESENCE_PENALTY=${FIELDS[15]:-} REPETITION_PENALTY=${FIELDS[16]:-}
 
-# Parse config values (via env var to avoid shell-escaping issues)
-export MODEL_CONFIG
-MODEL_NAME=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['name'])")
-CTX_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ctx_size'])")
-NGL=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ngl'])")
-BATCH_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['batch_size'])")
-UBATCH_SIZE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG'])['ubatch_size'])")
-NEEDS_PROXY=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('needs_proxy', False))")
-PROXY_INJECTION=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('proxy_injection', ''))")
-DRAFT_MODEL=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('draft_model', ''))")
-SPEC_TYPE=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('spec_type', ''))")
-REASONING=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('reasoning', ''))")
-TEMPLATE_KWARGS=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('chat_template_kwargs', ''))")
-TEMP=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('temp', ''))")
-TOP_P=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('top_p', ''))")
-MIN_P=$(python3 -c "import json,os; print(json.loads(os.environ['MODEL_CONFIG']).get('min_p', ''))")
 
 # Apply short context override
 if [[ "${SHORT_CTX_FLAG:-0}" -eq 1 ]]; then
@@ -166,6 +161,24 @@ if [[ ! -f "$MODEL_FILE" ]]; then
   exit 1
 fi
 
+# ─── Fit params to free memory (llama-fit-params) ─────────────────────────
+# Models without explicit ctx_size/ngl in models.json get optimal values
+# computed from live device memory at launch. llama-fit-params prints fitted
+# "-c N -ngl M" args; it needs the first shard, which MODEL_FILE already is.
+FIT_PARAMS=""
+if [[ -z "$CTX_SIZE" || -z "$NGL" ]]; then
+  FIT_BIN="$(dirname "$LLAMA_SERVER")/llama-fit-params"
+  if [[ -x "$FIT_BIN" ]]; then
+    FIT_PARAMS=$("$FIT_BIN" --model "$MODEL_FILE" 2>/dev/null | grep -E '^-c [0-9]+ -ngl (-?[0-9]+)$' || true)
+  fi
+  if [[ -z "$FIT_PARAMS" ]]; then
+    echo "⚠️  llama-fit-params unavailable; using defaults ctx=8192 ngl=64" >&2
+    FIT_PARAMS="-c 8192 -ngl 64"
+  fi
+  [[ -z "$CTX_SIZE" ]] && CTX_SIZE=$(echo "$FIT_PARAMS" | sed -E 's/^-c ([0-9]+).*/\1/')
+  [[ -z "$NGL" ]] && NGL=$(echo "$FIT_PARAMS" | sed -E 's/.*-ngl (-?[0-9]+)$/\1/')
+fi
+
 # Resolve DSpark drafter (speculative decoding): 'auto' scans HF cache for a
 # llama.cpp-standardized dflash GGUF (e.g. ...-dflash.gguf)
 if [[ "$DRAFT_MODEL" == "auto" ]]; then
@@ -201,7 +214,7 @@ if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
   echo "PROXY=$NEEDS_PROXY"
   echo "PROXY_INJECTION=$PROXY_INJECTION"
   echo "DRAFT_MODEL=$DRAFT_MODEL"
-  echo "SPEC_TYPE=$SPEC_TYPE REASONING=$REASONING TEMPLATE=$TEMPLATE_KWARGS TEMP=$TEMP TOP_P=$TOP_P MIN_P=$MIN_P"
+  echo "SPEC_TYPE=$SPEC_TYPE REASONING=$REASONING TEMPLATE=$TEMPLATE_KWARGS TEMP=$TEMP TOP_P=$TOP_P TOP_K=$TOP_K MIN_P=$MIN_P PRESENCE=$PRESENCE_PENALTY REPEAT=$REPETITION_PENALTY"
   echo "COMMAND=$LLAMA_SERVER --model $MODEL_FILE" \
        "${MMPROJ:+--mmproj $MMPROJ} --host $HOST --port $PORT" \
        "--ctx-size $CTX_SIZE --n-gpu-layers $NGL --threads 12" \
@@ -210,8 +223,8 @@ if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
        "${SPEC_TYPE:+--spec-type $SPEC_TYPE}" \
        "${REASONING:+--reasoning $REASONING}" \
        "${TEMPLATE_KWARGS:+--chat-template-kwargs $TEMPLATE_KWARGS}" \
-       "${TEMP:+--temp $TEMP} ${TOP_P:+--top-p $TOP_P} ${MIN_P:+--min-p $MIN_P}" \
-       "--reasoning-preserve --metrics --log-disable"
+       "${TEMP:+--temp $TEMP} ${TOP_P:+--top-p $TOP_P} ${TOP_K:+--top-k $TOP_K} ${MIN_P:+--min-p $MIN_P} ${PRESENCE_PENALTY:+--presence-penalty $PRESENCE_PENALTY} ${REPETITION_PENALTY:+--repeat-penalty $REPETITION_PENALTY}" \
+       "--reasoning-preserve --metrics"
   exit 0
 fi
 
@@ -242,7 +255,7 @@ echo "   Proxy:     $([[ $NEEDS_PROXY == True && $NO_PROXY -eq 0 ]] && echo 'on'
 echo "   DSpark:    $([[ -n $DRAFT_MODEL ]] && echo "on ($DRAFT_MODEL)" || echo 'off')"
 echo "   Reasoning: ${REASONING:-auto}"
 echo "   Template:  ${TEMPLATE_KWARGS:-default}"
-echo "   Sampling:  ${TEMP:-default} / top-p ${TOP_P:-default} / min-p ${MIN_P:-default}"
+echo "   Sampling:  ${TEMP:-default} / top-p ${TOP_P:-default} / top-k ${TOP_K:-default} / min-p ${MIN_P:-default} / presence ${PRESENCE_PENALTY:-default} / rep-pen ${REPETITION_PENALTY:-default}"
 echo ""
 
 nohup "$LLAMA_SERVER" \
@@ -263,28 +276,85 @@ nohup "$LLAMA_SERVER" \
   ${TEMPLATE_KWARGS:+--chat-template-kwargs "$TEMPLATE_KWARGS"} \
   ${TEMP:+--temp "$TEMP"} \
   ${TOP_P:+--top-p "$TOP_P"} \
+  ${TOP_K:+--top-k "$TOP_K"} \
   ${MIN_P:+--min-p "$MIN_P"} \
+  ${PRESENCE_PENALTY:+--presence-penalty "$PRESENCE_PENALTY"} \
+  ${REPETITION_PENALTY:+--repeat-penalty "$REPETITION_PENALTY"} \
   --reasoning-preserve \
   --metrics \
-  --log-disable \
   >> "$LOGFILE" 2>&1 &
 
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PIDFILE"
 
-echo "⏳ Waiting for server..."
-for i in $(seq 1 60); do
-  if curl -s "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-    echo "✅ Server ready! (PID $SERVER_PID, port $PORT)"
+echo "⏳ Waiting for server (up to 15 min for large models)..."
+READY=0
+for i in $(seq 1 900); do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "❌ llama-server died during startup (PID $SERVER_PID). Last log lines:"
+    tail -n 40 "$LOGFILE"
+    rm -f "$PIDFILE"
+    exit 1
+  fi
+  if curl -s -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    READY=1
+    echo "✅ Server ready after ${i}s (PID $SERVER_PID, port $PORT)"
     break
   fi
   sleep 1
 done
 
-# Launch proxy if needed
-if [[ "$NEEDS_PROXY" == True && $NO_PROXY -eq 0 ]]; then
+if [[ "$READY" -ne 1 ]]; then
+  echo "❌ Server did not become healthy within 900s. Last log lines:"
+  tail -n 40 "$LOGFILE"
+  exit 1
+fi
+
+# Verify the model actually generates. /health responds while the model is
+# still loading (chat returns 503 "Loading model"), so retry until a real
+# completion comes back or we time out.
+echo "🧪 Verifying model generation (retries while weights load)..."
+VERIFIED=0
+for i in $(seq 1 90); do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "❌ llama-server died while loading (PID $SERVER_PID). Last log lines:"
+    tail -n 40 "$LOGFILE"
+    rm -f "$PIDFILE"
+    exit 1
+  fi
+  VERIFY=$(curl -s -m 120 -X POST "http://127.0.0.1:$PORT/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"local","messages":[{"role":"user","content":"Reply with exactly: ok"}],"max_tokens":8}' 2>&1)
+  if echo "$VERIFY" | grep -q '"content"'; then
+    VERIFIED=1
+    ANSWER=$(echo "$VERIFY" | python3 -c "import json,sys; print(json.load(sys.stdin)['choices'][0]['message']['content'][:60])" 2>/dev/null || echo "?")
+    echo "✅ Model verified after ~$((i*10))s — response: $ANSWER"
+    break
+  fi
+  if ! echo "$VERIFY" | grep -q '503\|Loading model'; then
+    # Not a loading-state response: real error, fail fast
+    echo "❌ Verification request failed. Response:"
+    echo "$VERIFY" | head -c 2000
+    echo ""
+    echo "Last log lines:"
+    tail -n 40 "$LOGFILE"
+    exit 1
+  fi
+  sleep 10
+done
+
+if [[ "$VERIFIED" -ne 1 ]]; then
+  echo "❌ Model did not produce a completion within ~15 min. Last log lines:"
+  tail -n 40 "$LOGFILE"
+  exit 1
+fi
+
+# Launch proxy (always, unless --no-proxy): serves the full LlamaBar model
+# catalog on /v1/models for client discovery, and injects reasoning strength
+# into chat requests when the model needs it.
+if [[ $NO_PROXY -eq 0 ]]; then
   # Update proxy with injection string
-  if [[ -n "$PROXY_INJECTION" ]]; then
+  if [[ "$NEEDS_PROXY" == True && -n "$PROXY_INJECTION" ]]; then
     # Create model-specific proxy config
     sed -i '' "s/DEFAULT_REASONING = \".*\"/DEFAULT_REASONING = \"$PROXY_INJECTION\"/" "$SCRIPT_DIR/proxy.py" 2>/dev/null || true
   fi
@@ -294,6 +364,6 @@ if [[ "$NEEDS_PROXY" == True && $NO_PROXY -eq 0 ]]; then
   echo "✅ Proxy ready! (PID $PROXY_PID, port $PROXY_PORT)"
   echo "   Pi connects to: http://127.0.0.1:$PROXY_PORT/v1"
 else
-  echo "   Proxy skipped"
+  echo "   Proxy skipped (--no-proxy)"
   echo "   Direct: http://127.0.0.1:$PORT/v1"
 fi

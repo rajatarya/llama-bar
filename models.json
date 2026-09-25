@@ -1,5 +1,6 @@
 {
-  "default_model": "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M",
+  "default_model": "unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS",
+  "_comment": "Tuning overrides only. The model list comes from llama-server --cache-list (discover_models.sh). Any cached model not listed here still appears in the menu and launches with llama-fit-params-computed ctx/ngl.",
   "models": {
     "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M": {
       "name": "Muse-Glimmer-30B Q4_K_M",
@@ -47,6 +48,39 @@
       "top_p": 0.95,
       "min_p": 0.01,
       "description": "DeepSeek-V4-Flash-0731, UD-Q2_K_XL ~90 GB, DSpark draft + think-high defaults"
+    },
+    "vcruz305/DeepSeek-V4.1-Flash-GGUF:Q2_K": {
+      "name": "DeepSeek-V4.1-Flash Q2_K",
+      "ctx_size": 131072,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": false,
+      "proxy_injection": "",
+      "draft_model": "auto",
+      "spec_type": "draft-dspark",
+      "reasoning": "on",
+      "chat_template_kwargs": "{\"reasoning_effort\":\"high\"}",
+      "temp": 1.0,
+      "top_p": 0.95,
+      "min_p": 0.01,
+      "description": "DeepSeek-V4.1-Flash 552B MoE Q2_K, 1M context, DSpark draft"
+    },
+    "unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS": {
+      "name": "Qwen3.8-Flash-Next IQ4_XS",
+      "ctx_size": 262144,
+      "ngl": 64,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": false,
+      "proxy_injection": "",
+      "reasoning": "off",
+      "temp": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "description": "Qwen3.8-Flash-Next 125B MoE IQ4_XS, 262K context, unsloth GGUF. Instruct mode (enable_thinking=false): temp 0.7, top_p 0.80, top_k 20, presence_penalty 1.5, min_p 0.0"
     }
   }
 }

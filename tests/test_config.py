@@ -18,23 +18,24 @@ def test_config_load():
     
     model = cfg['models'][cfg['default_model']]
     assert 'name' in model, "Missing name"
-    assert 'ctx_size' in model, "Missing ctx_size"
-    assert 'ngl' in model, "Missing ngl"
     
     print("✓ Config loads correctly")
     return True
 
 def test_config_schema():
-    """Test config schema validation."""
+    """Config entries are tuning overrides; only name is required."""
     config_path = os.path.join(os.path.dirname(__file__), '..', 'models.json')
     with open(config_path) as f:
         cfg = json.load(f)
-    
-    required_fields = ['name', 'ctx_size', 'ngl', 'batch_size', 'ubatch_size']
+
     for model_id, model in cfg['models'].items():
-        for field in required_fields:
-            assert field in model, f"Model {model_id} missing {field}"
-    
+        assert 'name' in model, f"Model {model_id} missing name"
+        # Tuning fields must be presentable values when provided.
+        for field in ('ctx_size', 'ngl', 'batch_size', 'ubatch_size'):
+            if field in model:
+                assert isinstance(model[field], int) and model[field] > 0, \
+                    f"Model {model_id} has invalid {field}"
+
     print("✓ Config schema valid")
     return True
 
