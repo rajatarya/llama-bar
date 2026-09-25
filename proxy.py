@@ -149,6 +149,54 @@ def catalog_models():
     return {"object": "list", "data": data}
 
 
+def normalize_messages(messages):
+    """Flatten tool-call transcripts for models with strict chat templates.
+
+    Some templates (unsloth Qwen3-Next, gemma) raise
+    "Conversation roles must alternate user/assistant/..." on tool roles or
+    consecutive same-role turns. Tool results are folded into the *following*
+    assistant message as labelled text; any other consecutive same-role pair is
+    concatenated. User/assistant alternation is preserved for everything else.
+    """
+    if not messages:
+        return messages
+
+    # 1) Fold tool messages into the next assistant turn.
+    pending_tools = []
+    folded = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            name = m.get("name") or m.get("tool_call_id") or "tool"
+            pending_tools.append(f"[tool:{name}] {m.get('content', '')}")
+            continue
+        if role == "assistant" and pending_tools:
+            content = "\n".join(pending_tools)
+            if m.get("content"):
+                content += "\n" + m["content"]
+            folded.append({**m, "content": content})
+            pending_tools = []
+            continue
+        if pending_tools:
+            # Tool results not followed by an assistant turn (rare): emit as user.
+            folded.append({"role": "user", "content": "\n".join(pending_tools)})
+            pending_tools = []
+        folded.append(m)
+    if pending_tools:
+        folded.append({"role": "user", "content": "\n".join(pending_tools)})
+
+    # 2) Merge consecutive same-role messages (system excluded — clients put it first).
+    merged = []
+    for m in folded:
+        if (merged and m.get("role") == merged[-1].get("role")
+                and m.get("role") != "system"):
+            prev = merged[-1]
+            prev["content"] = (str(prev.get("content") or "") + "\n" + str(m.get("content") or "")).strip()
+        else:
+            merged.append(dict(m))
+    return merged
+
+
 class Proxy(http.server.BaseHTTPRequestHandler):
     # Silence the default per-request stderr logging
     def log_message(self, *args):
@@ -201,7 +249,7 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                 else:
                     messages.insert(0, {"role": "system", "content": DEFAULT_REASONING})
 
-                req["messages"] = messages
+                req["messages"] = normalize_messages(messages)
                 body = json.dumps(req).encode("utf-8")
                 self.headers["Content-Length"] = str(len(body))
             except (json.JSONDecodeError, KeyError, TypeError):
