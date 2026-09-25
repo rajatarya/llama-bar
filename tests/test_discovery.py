@@ -43,6 +43,30 @@ def test_discovery_independent_of_config():
     print(f"✓ Discovery lists {len(discovered)} cached models, independent of config")
     return True
 
+def test_config_keys_match_discovered_tags():
+    """A config entry whose repo is cached under a slightly different tag
+    (e.g. UD-Q2_K_XL vs llama.cpp's Q2_K_XL) is silently never applied."""
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'models.json')
+    with open(config_path) as f:
+        cfg = json.load(f)
+    script_path = os.path.join(os.path.dirname(__file__), '..', 'discover_models.sh')
+    result = subprocess.run(['bash', script_path], capture_output=True, text=True)
+    discovered = json.loads(result.stdout.strip())
+
+    tags_by_repo = {}
+    for model_id in discovered:
+        repo, tag = model_id.rsplit(':', 1)
+        tags_by_repo.setdefault(repo, set()).add(tag.upper())
+    for key in cfg['models']:
+        repo, tag = key.rsplit(':', 1)
+        if key in discovered or repo not in tags_by_repo:
+            continue  # applied, or simply not downloaded
+        near = [t for t in tags_by_repo[repo] if tag.upper().endswith(t) or t.endswith(tag.upper())]
+        assert not near, f"config key {key} never applies: llama.cpp discovers it as {repo}:{near[0]}"
+
+    print("✓ Every cached config entry's key matches its discovered id")
+    return True
+
 def _fake_bin(path, body):
     with open(path, 'w') as f:
         f.write('#!/bin/bash\n' + body + '\n')
@@ -76,6 +100,7 @@ if __name__ == '__main__':
     try:
         test_discovery_script()
         test_discovery_independent_of_config()
+        test_config_keys_match_discovered_tags()
         test_discovery_merges_mtplx_packs()
         print("\nAll discovery tests passed!")
         sys.exit(0)
