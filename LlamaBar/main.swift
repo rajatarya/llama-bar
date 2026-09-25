@@ -27,23 +27,25 @@ private func healthy() -> Bool {
         .trimmingCharacters(in: .whitespacesAndNewlines) == "200"
 }
 
-/// The model id llama-server is actually serving (matched by quant from /props), or nil.
-private func runningModelId(_ cfg: ModelsConfig) -> String? {
-    guard let text = sh("/usr/bin/curl", "-s", "--max-time", "2", propsURL),
+/// model_path from a server JSON endpoint, or nil.
+private func modelPath(from url: String) -> String? {
+    guard let text = sh("/usr/bin/curl", "-s", "--max-time", "2", url),
           let data = text.data(using: .utf8),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let modelPath = json["model_path"] as? String else { return nil }
-    return cfg.modelId(forRunningPath: modelPath, candidates: discovered)
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    return json["model_path"] as? String
 }
 
-private func metric(_ name: String) -> Double? {
-    guard let data = sh("/usr/bin/curl", "-s", "--max-time", "2", metricsURL) else { return nil }
-    for line in data.components(separatedBy: "\n") {
-        if line.hasPrefix(name) {
-            if let val = line.split(separator: " ").last { return Double(val) }
-        }
-    }
-    return nil
+/// The model id the server is actually serving, or nil. llama-server reports
+/// model_path on /props; mtplx serve has no /props but reports it on /health.
+private func runningModelId(_ cfg: ModelsConfig) -> String? {
+    guard let path = modelPath(from: propsURL) ?? modelPath(from: healthURL) else { return nil }
+    return cfg.modelId(forRunningPath: path, candidates: discovered)
+}
+
+/// Generation tok/s from /metrics (llama-server Prometheus or MTPLX JSON).
+private func tokensPerSecond() -> Double? {
+    guard let body = sh("/usr/bin/curl", "-s", "--max-time", "2", metricsURL) else { return nil }
+    return parseDecodeTokensPerSecond(body)
 }
 
 private func fmtDuration(_ secs: TimeInterval) -> String {
@@ -225,7 +227,7 @@ func refresh() {
     case .running(let t0):
         item.button?.title = "●"
         stateItem.title = "Running · up \(fmtDuration(Date().timeIntervalSince(t0)))"
-        if let tps = metric("llamacpp:predicted_tokens_seconds") {
+        if let tps = tokensPerSecond() {
             statsItem.title = String(format: "%.1f tok/s", tps)
         } else {
             statsItem.title = "tok/s: -"

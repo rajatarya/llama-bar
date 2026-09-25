@@ -21,15 +21,22 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 - ● Green dot = running, ○ grey = stopped, ◐ spinning = starting
 - Click to open menu with start/stop/quit controls
 - **Models ▸** submenu lists everything in `models.json`; ✓ marks the loaded model, clicking another one switches to it
-- Live stats from Prometheus metrics endpoint
+- Live tok/s from the server's `/metrics` (llama.cpp Prometheus or MTPLX JSON)
 - Audible notification when model loads
 - Auto-starts server on launch, registers as login item
 
 ### Server Management
-- `start.sh` launches llama-server with optimal config (flash-attn, GPU layers, context size)
+- `start.sh` launches llama-server with optimal config (flash-attn, GPU layers, context size), or `mtplx serve` for MTPLX packs
 - `proxy.py` injects reasoning prompts transparently
 - `stop.sh` / `status.sh` for control
 - LaunchAgent support for headless operation
+
+### Backends: llama.cpp and MTPLX
+Each model runs on one of two backends, both served on port 8080 behind the same proxy and menu:
+- **llama.cpp** (default): GGUFs from the HF cache, ids like `unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS`.
+- **MTPLX**: [MTPLX](https://github.com/youssofal/MTPLX) packs (MLX weights + the model's native MTP heads for speculative decoding), ids like `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX`. Installed packs (`mtplx list`) appear in the Models menu automatically. Install with `uv tool install mtplx` and add packs with `mtplx pull <repo> --json`.
+
+In `models.json`, `"backend": "mtplx"` (paired with the `:MTPLX` id tag) selects MTPLX. MTPLX honours `ctx_size` (`--context-window`), `reasoning`, `temp`, `top_p`, `top_k`; `ngl`, batch sizes, `min_p`, penalties, `chat_template_kwargs` and DSpark drafts are llama.cpp-only. On an M5 Max, MTPLX runs Qwen3.8-Flash-Next at ~95 tok/s (4K context) vs ~47 for llama.cpp's IQ4_XS, which is why it is the default.
 
 ### Reusable Design
 While built for Muse-Glimmer-30B-BF16, the setup is model-agnostic:
@@ -85,8 +92,9 @@ llama-bar/
 ./run_tests.sh
 ```
 
-Runs config, discovery, start.sh (including `--dry-run` resolution of every
-model), and the Swift model-logic tests.
+Runs config, discovery (including MTPLX pack merging), start.sh (including
+`--dry-run` resolution of every model on both backends), proxy model matching,
+and the Swift model-logic tests.
 ```
 
 ## Performance

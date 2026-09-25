@@ -14,6 +14,9 @@ set -euo pipefail
 # ─── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLAMA_SERVER="/Users/rajat/code/hf/official-llama.cpp/build/bin/llama-server"
+# Absolute default: launchd's PATH does not include ~/.local/bin.
+MTPLX_BIN="${MTPLX_BIN:-$HOME/.local/bin/mtplx}"
+MTPLX_MODELS_DIR="${MTPLX_MODELS_DIR:-$HOME/.mtplx/models}"
 CONFIG_FILE="$SCRIPT_DIR/models.json"
 PIDFILE="$HOME/.cache/llama-server.pid"
 PROXY_PIDFILE="$HOME/.cache/llama-proxy.pid"
@@ -91,17 +94,37 @@ vals = [m.get('name') or fallback_name, m.get('ctx_size', ''), m.get('ngl', ''),
         m.get('reasoning') or '', m.get('chat_template_kwargs') or '',
         m.get('temp', ''), m.get('top_p', ''), m.get('top_k', ''),
         m.get('min_p', ''), m.get('presence_penalty', ''),
-        m.get('repetition_penalty', '')]
+        m.get('repetition_penalty', ''),
+        # Discovered MTPLX packs launch with mtplx even without a config entry.
+        m.get('backend') or ('mtplx' if os.environ['MODEL_ID'].endswith(':MTPLX') else 'llamacpp')]
 assert not any('|' in str(v) or '\n' in str(v) for v in vals), 'illegal delimiter in config value'
 print('|'.join(str(v) for v in vals), end='')
 ") || true
-MODEL_NAME=${FIELDS[0]:-} CTX_SIZE=${FIELDS[1]:-} NGL=${FIELDS[2]:-} BATCH_SIZE=${FIELDS[3]:-256} UBATCH_SIZE=${FIELDS[4]:-256} NEEDS_PROXY=${FIELDS[5]:-False} PROXY_INJECTION=${FIELDS[6]:-} DRAFT_MODEL=${FIELDS[7]:-} SPEC_TYPE=${FIELDS[8]:-} REASONING=${FIELDS[9]:-} TEMPLATE_KWARGS=${FIELDS[10]:-} TEMP=${FIELDS[11]:-} TOP_P=${FIELDS[12]:-} TOP_K=${FIELDS[13]:-} MIN_P=${FIELDS[14]:-} PRESENCE_PENALTY=${FIELDS[15]:-} REPETITION_PENALTY=${FIELDS[16]:-}
+MODEL_NAME=${FIELDS[0]:-} CTX_SIZE=${FIELDS[1]:-} NGL=${FIELDS[2]:-} BATCH_SIZE=${FIELDS[3]:-256} UBATCH_SIZE=${FIELDS[4]:-256} NEEDS_PROXY=${FIELDS[5]:-False} PROXY_INJECTION=${FIELDS[6]:-} DRAFT_MODEL=${FIELDS[7]:-} SPEC_TYPE=${FIELDS[8]:-} REASONING=${FIELDS[9]:-} TEMPLATE_KWARGS=${FIELDS[10]:-} TEMP=${FIELDS[11]:-} TOP_P=${FIELDS[12]:-} TOP_K=${FIELDS[13]:-} MIN_P=${FIELDS[14]:-} PRESENCE_PENALTY=${FIELDS[15]:-} REPETITION_PENALTY=${FIELDS[16]:-} BACKEND=${FIELDS[17]:-llamacpp}
 
 
 # Apply short context override
 if [[ "${SHORT_CTX_FLAG:-0}" -eq 1 ]]; then
   CTX_SIZE=$SHORT_CTX
 fi
+
+# ─── MTPLX backend: MLX pack served by `mtplx serve` on the same port ──────
+# Packs live in MTPLX's own model store, not the HF cache. mtplx takes only the
+# sampling/reasoning defaults below; min_p, penalties, template kwargs and
+# DSpark are llama.cpp-only.
+if [[ "$BACKEND" == "mtplx" ]]; then
+  MTPLX_REPO="${MODEL_ID%%:*}"
+  MODEL_DIR="$MTPLX_MODELS_DIR/${MTPLX_REPO//\//--}"
+  if [[ ! -d "$MODEL_DIR" ]]; then
+    echo "❌ MTPLX pack not installed: $MODEL_DIR (run: mtplx pull $MTPLX_REPO --json)"
+    exit 1
+  fi
+  SERVER_CMD=("$MTPLX_BIN" serve --model "$MTPLX_REPO" --host "$HOST" --port "$PORT" --no-auth --yes
+    ${CTX_SIZE:+--context-window "$CTX_SIZE"}
+    ${REASONING:+--reasoning "$REASONING"}
+    ${TEMP:+--temperature "$TEMP"} ${TOP_P:+--top-p "$TOP_P"} ${TOP_K:+--top-k "$TOP_K"})
+else
+# ─── llama.cpp backend (unindented to keep the resolution logic diff-free) ──
 
 # Resolve model file path from HF cache by scanning for matching GGUF files
 MODEL_FILE=""
@@ -204,9 +227,20 @@ if [[ -n "$DRAFT_MODEL" && ! -f "$DRAFT_MODEL" ]]; then
   DRAFT_MODEL=""
 fi
 
+fi # ─── end llama.cpp backend ───────────────────────────────────────────────
+
 # ─── Dry run: print resolved launch plan, launch nothing ───────────────────
 if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
   echo "DRY-RUN model=$MODEL_ID"
+  echo "BACKEND=$BACKEND"
+  if [[ "$BACKEND" == "mtplx" ]]; then
+    echo "MODEL_DIR=$MODEL_DIR"
+    echo "CTX_SIZE=$CTX_SIZE"
+    echo "PROXY=$NEEDS_PROXY"
+    echo "REASONING=$REASONING TEMP=$TEMP TOP_P=$TOP_P TOP_K=$TOP_K"
+    echo "COMMAND=${SERVER_CMD[*]}"
+    exit 0
+  fi
   echo "MODEL_FILE=$MODEL_FILE"
   echo "MMPROJ=$MMPROJ"
   echo "CTX_SIZE=$CTX_SIZE"
@@ -229,9 +263,18 @@ if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
 fi
 
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
-if [[ ! -x "$LLAMA_SERVER" ]]; then
-  echo "❌ llama-server not found"
-  exit 1
+if [[ "$BACKEND" == "mtplx" ]]; then
+  SERVER_LABEL="mtplx serve"
+  if [[ ! -x "$MTPLX_BIN" ]]; then
+    echo "❌ mtplx not found at $MTPLX_BIN (install: uv tool install mtplx)"
+    exit 1
+  fi
+else
+  SERVER_LABEL="llama-server"
+  if [[ ! -x "$LLAMA_SERVER" ]]; then
+    echo "❌ llama-server not found"
+    exit 1
+  fi
 fi
 
 if [[ -f "$PIDFILE" ]]; then
@@ -247,13 +290,19 @@ fi
 # ─── Launch ─────────────────────────────────────────────────────────────────
 echo "🚀 Starting $MODEL_NAME..."
 echo "   Model ID:  $MODEL_ID"
+echo "   Backend:   $SERVER_LABEL"
 echo "   Port:      $PORT"
-echo "   Context:   $CTX_SIZE"
+echo "   Context:   ${CTX_SIZE:-default}"
+echo "   Proxy:     $([[ $NEEDS_PROXY == True && $NO_PROXY -eq 0 ]] && echo 'on' || echo 'off')"
+echo "   Reasoning: ${REASONING:-auto}"
+if [[ "$BACKEND" == "mtplx" ]]; then
+  echo "   Sampling:  ${TEMP:-default} / top-p ${TOP_P:-default} / top-k ${TOP_K:-default}"
+  echo ""
+  nohup "${SERVER_CMD[@]}" >> "$LOGFILE" 2>&1 &
+else
 echo "   GPU Lrs:   $NGL"
 echo "   Batch:     $BATCH_SIZE / $UBATCH_SIZE"
-echo "   Proxy:     $([[ $NEEDS_PROXY == True && $NO_PROXY -eq 0 ]] && echo 'on' || echo 'off')"
 echo "   DSpark:    $([[ -n $DRAFT_MODEL ]] && echo "on ($DRAFT_MODEL)" || echo 'off')"
-echo "   Reasoning: ${REASONING:-auto}"
 echo "   Template:  ${TEMPLATE_KWARGS:-default}"
 echo "   Sampling:  ${TEMP:-default} / top-p ${TOP_P:-default} / top-k ${TOP_K:-default} / min-p ${MIN_P:-default} / presence ${PRESENCE_PENALTY:-default} / rep-pen ${REPETITION_PENALTY:-default}"
 echo ""
@@ -283,6 +332,7 @@ nohup "$LLAMA_SERVER" \
   --reasoning-preserve \
   --metrics \
   >> "$LOGFILE" 2>&1 &
+fi
 
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PIDFILE"
@@ -291,7 +341,7 @@ echo "⏳ Waiting for server (up to 15 min for large models)..."
 READY=0
 for i in $(seq 1 900); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "❌ llama-server died during startup (PID $SERVER_PID). Last log lines:"
+    echo "❌ $SERVER_LABEL died during startup (PID $SERVER_PID). Last log lines:"
     tail -n 40 "$LOGFILE"
     rm -f "$PIDFILE"
     exit 1
@@ -317,7 +367,7 @@ echo "🧪 Verifying model generation (retries while weights load)..."
 VERIFIED=0
 for i in $(seq 1 90); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "❌ llama-server died while loading (PID $SERVER_PID). Last log lines:"
+    echo "❌ $SERVER_LABEL died while loading (PID $SERVER_PID). Last log lines:"
     tail -n 40 "$LOGFILE"
     rm -f "$PIDFILE"
     exit 1

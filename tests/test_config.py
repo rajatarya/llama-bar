@@ -35,6 +35,11 @@ def test_config_schema():
             if field in model:
                 assert isinstance(model[field], int) and model[field] > 0, \
                     f"Model {model_id} has invalid {field}"
+        # backend picks the server start.sh launches; MTPLX packs use the :MTPLX tag.
+        backend = model.get('backend', 'llamacpp')
+        assert backend in ('llamacpp', 'mtplx'), f"Model {model_id} has unknown backend {backend}"
+        assert (backend == 'mtplx') == model_id.endswith(':MTPLX'), \
+            f"Model {model_id}: backend {backend} must match the :MTPLX id tag"
 
     print("✓ Config schema valid")
     return True

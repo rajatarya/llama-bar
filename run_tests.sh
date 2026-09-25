@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the full llama-bar test suite: config, discovery, start.sh, model logic.
+# Run the full llama-bar test suite: config, discovery, start.sh, proxy, model logic.
 # Exits nonzero on the first failing test.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -12,6 +12,9 @@ python3 tests/test_discovery.py
 
 echo "── tests/test_start.py ──"
 python3 tests/test_start.py
+
+echo "── tests/test_proxy.py ──"
+python3 -B tests/test_proxy.py
 
 echo "── tests/test_model_logic.swift ──"
 swiftc -o /tmp/llamabar-test-model-logic tests/test_model_logic.swift LlamaBar/ModelLogic.swift
