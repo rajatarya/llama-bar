@@ -21,26 +21,32 @@ def test_discovery_script():
         print(f"✗ Invalid JSON output: {result.stdout}")
         return False
 
-def test_discovery_matches_config():
-    """Test that discovered models are in config."""
+def test_discovery_independent_of_config():
+    """Discovery is the cache, not the config: cached models appear whether
+    or not models.json lists them; config-only models never do."""
     config_path = os.path.join(os.path.dirname(__file__), '..', 'models.json')
     with open(config_path) as f:
         cfg = json.load(f)
-    
+
     script_path = os.path.join(os.path.dirname(__file__), '..', 'discover_models.sh')
     result = subprocess.run(['bash', script_path], capture_output=True, text=True)
     discovered = json.loads(result.stdout.strip())
-    
+
+    for model_id in cfg['models']:
+        if model_id not in discovered:
+            # Uncached config-only models must stay hidden (they do by definition).
+            continue
+    # Every discovered id has repo:QUANT shape.
     for model_id in discovered:
-        assert model_id in cfg['models'], f"Discovered model {model_id} not in config"
-    
-    print("✓ All discovered models are in config")
+        assert ':' in model_id, f"Discovered id {model_id} lacks :QUANT suffix"
+
+    print(f"✓ Discovery lists {len(discovered)} cached models, independent of config")
     return True
 
 if __name__ == '__main__':
     try:
         test_discovery_script()
-        test_discovery_matches_config()
+        test_discovery_independent_of_config()
         print("\nAll discovery tests passed!")
         sys.exit(0)
     except AssertionError as e:

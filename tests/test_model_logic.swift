@@ -23,10 +23,9 @@ struct TestRunner {
         check(cfg.models[cfg.default_model] != nil, "default_model is a configured model")
         check(cfg.models.count >= 4, "at least 4 models configured")
 
+        // Config entries are tuning overrides only; all fields optional except name.
         for (id, model) in cfg.models {
             check(!model.name.isEmpty, "\(id) has a name")
-            check(model.ctx_size > 0 && model.ngl > 0 && model.batch_size > 0 && model.ubatch_size > 0,
-                  "\(id) has ctx_size/ngl/batch_size/ubatch_size")
         }
 
         // MARK: Discovery parsing
@@ -42,19 +41,19 @@ struct TestRunner {
         let bf16 = "unsloth/Muse-Glimmer-30B-GGUF:BF16"
         let ds = "unsloth/DeepSeek-V4-Flash-0731-GGUF:UD-Q2_K_XL"
 
-        check(cfg.modelId(forRunningPath: "/models--bartowski--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-q4_k_m.gguf") == q4,
+        let candidates = [q4, q5, bf16, ds, "ggml-org/gemma-3-1b-it-GGUF:Q4_K_M"]
+        check(cfg.modelId(forRunningPath: "/models--bartowski--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-q4_k_m.gguf", candidates: candidates) == q4,
               "resolves Q4_K_M from file name")
-        check(cfg.modelId(forRunningPath: "/models--bartowski--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-q5_k_m.gguf") == q5,
+        check(cfg.modelId(forRunningPath: "/models--bartowski--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-q5_k_m.gguf", candidates: candidates) == q5,
               "resolves Q5_K_M from file name")
-        check(cfg.modelId(forRunningPath: "/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-bf16.gguf") == bf16,
+        check(cfg.modelId(forRunningPath: "/models--unsloth--Muse-Glimmer-30B-GGUF/snapshots/x/ggml-model-bf16.gguf", candidates: candidates) == bf16,
               "resolves BF16 from file name")
-        check(cfg.modelId(forRunningPath: "/models--unsloth--DeepSeek-V4-Flash-0731-GGUF/snapshots/x/ggml-model-ud-q2_k_xl.gguf") == ds,
+        check(cfg.modelId(forRunningPath: "/models--unsloth--DeepSeek-V4-Flash-0731-GGUF/snapshots/x/ggml-model-ud-q2_k_xl.gguf", candidates: candidates) == ds,
               "resolves DeepSeek UD-Q2_K_XL from file name")
-        check(cfg.modelId(forRunningPath: "/tmp/unknown-model.gguf") == nil,
+        check(cfg.modelId(forRunningPath: "/tmp/unknown-model.gguf", candidates: candidates) == nil,
               "unknown model → nil")
-        check(cfg.modelId(forRunningPath: "") == nil,
+        check(cfg.modelId(forRunningPath: "", candidates: candidates) == nil,
               "empty path → nil")
-
         // MARK: Display title
 
         let title = cfg.displayTitle(for: q4)
@@ -70,12 +69,16 @@ struct TestRunner {
         check(switchAction(selected: q5, current: q4, isRunning: false) == .start(q5), "stopped + different → start")
         check(switchAction(selected: q5, current: q4, isRunning: true) == .restart(q5), "running + different → restart")
 
-        // MARK: Deterministic ordering
+        // MARK: Discovery-driven menu list
 
-        let sorted = cfg.sortedModelIDs()
-        check(sorted == cfg.sortedModelIDs(), "sortedModelIDs is stable")
-        check(sorted.count == cfg.models.count, "sortedModelIDs covers every model")
-        check(Set(sorted) == Set(cfg.models.keys), "sortedModelIDs contains exactly the configured ids")
+        let discovered = ["zzz/Tiny-GGUF:Q4_K_M", q4, "ggml-org/gemma-3-1b-it-GGUF:Q8_0"]
+        let menu = cfg.menuModelIDs(discovered: discovered)
+        check(menu.count == discovered.count, "menu covers every discovered model")
+        check(Set(menu) == Set(discovered), "menu contains exactly the discovered ids")
+        check(cfg.menuModelIDs(discovered: [q4]).first == q4, "single discovered id survives")
+        check(cfg.menuModelIDs(discovered: []).isEmpty, "empty discovery → empty menu")
+        // Configured models that are NOT cached stay hidden.
+        check(!menu.contains("vcruz305/DeepSeek-V4.1-Flash-GGUF:Q2_K"), "uncached config-only model hidden")
 
         if failures == 0 {
             print("✅ All model logic tests passed")

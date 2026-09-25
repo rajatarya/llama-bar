@@ -26,20 +26,23 @@ struct ModelsConfig: Codable {
         return try? JSONDecoder().decode(ModelsConfig.self, from: data)
     }
 
-    /// Deterministic menu order: by display name, ties broken by id.
-    func sortedModelIDs() -> [String] {
-        models.keys.sorted { a, b in
+    /// Menu order: every discovered model first (tuning overrides are just
+    /// decoration); config-only models stay hidden until they're cached.
+    func menuModelIDs(discovered: [String]) -> [String] {
+        discovered.sorted { a, b in
             let na = models[a]?.name ?? a, nb = models[b]?.name ?? b
             if na != nb { return na.localizedCaseInsensitiveCompare(nb) == .orderedAscending }
             return a < b
         }
     }
 
-    /// Match a llama-server model_path to one of our configured ids by quant
+
+    /// Match a llama-server model_path to one of the available ids by quant
     /// (e.g. …/ggml-model-q4_k_m.gguf → bartowski/…:Q4_K_M). nil if unknown.
-    func modelId(forRunningPath path: String) -> String? {
+    func modelId(forRunningPath path: String, candidates: [String]) -> String? {
         let base = (path as NSString).lastPathComponent.lowercased()
-        for id in sortedModelIDs() {
+        // Longest id first so ":Q4_K_M" never steals a ":Q4_K_M_XL" path.
+        for id in menuModelIDs(discovered: candidates).sorted(by: { $0.count > $1.count }) {
             if let quant = id.split(separator: ":").last?.lowercased(),
                base.contains(quant) {
                 return id

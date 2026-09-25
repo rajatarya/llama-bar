@@ -18,15 +18,15 @@ def test_start_help():
     return True
 
 def test_start_dry_run_all_models():
-    """start.sh --dry-run resolves every configured model without launching."""
+    """start.sh --dry-run resolves every model available to llama-server."""
     import json
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'models.json')
     script_path = os.path.join(os.path.dirname(__file__), '..', 'start.sh')
-    with open(config_path) as f:
-        cfg = json.load(f)
+    out = subprocess.run(['bash', script_path, '--list'],
+                         capture_output=True, text=True)
+    discovered = json.loads(out.stdout.strip())
 
-    assert len(cfg['models']) >= 1, "No models configured to test"
-    for model_id in cfg['models']:
+    assert len(discovered) >= 1, "No models available to llama-server"
+    for model_id in discovered:
         result = subprocess.run(
             ['bash', script_path, '--model', model_id, '--dry-run'],
             capture_output=True, text=True)
@@ -42,7 +42,7 @@ def test_start_dry_run_all_models():
         assert os.path.isfile(model_file), \
             f"MODEL_FILE not on disk for {model_id}: {model_file}"
 
-    print(f"✓ dry-run resolves all {len(cfg['models'])} configured models")
+    print(f"✓ dry-run resolves all {len(discovered)} available models")
     return True
 
 

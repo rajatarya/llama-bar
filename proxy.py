@@ -4,6 +4,14 @@
 Listens on 8081, forwards to llama-server on 8080.
 Only modifies /v1/chat/completions — everything else passes through untouched.
 
+/v1/models is served locally from models.json (the full LlamaBar catalog), so
+clients like omp can discover every model LlamaBar offers — not just the one
+currently loaded in llama-server. Each entry carries metadata under "llamabar"
+(loaded / quant / ctx_size / reasoning) plus standard "context_length" and
+"max_model_len" fields so OpenAI-compatible discovery picks up the context
+window. The live llama-server id is appended
+as an alias when reachable, so requests naming the on-disk path still route.
+
 Error handling: upstream errors are passed through with their real status code
 and body (not masked as 502), and logged to ~/.cache/llama-proxy.log so
 failures are diagnosable after the fact.
@@ -12,7 +20,9 @@ failures are diagnosable after the fact.
 import http.server
 import json
 import os
+import re
 import sys
+import subprocess
 import time
 import urllib.request
 import urllib.error
@@ -21,6 +31,7 @@ UPSTREAM = "http://127.0.0.1:8080"
 LISTEN_PORT = 8081
 DEFAULT_REASONING = "Reasoning strength: xhigh"
 LOG_FILE = os.path.expanduser("~/.cache/llama-proxy.log")
+MODELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json")
 
 HOP_BY_HOP = {"host", "connection", "proxy-connection", "keep-alive", "transfer-encoding"}
 
@@ -34,12 +45,132 @@ def log(msg: str):
         pass
 
 
+def _hf_repo(model_id: str) -> str:
+    return model_id.split(":", 1)[0]
+
+
+def _hf_quant(model_id: str) -> str:
+    return model_id.split(":", 1)[1] if ":" in model_id else "latest"
+
+
+def _matches_loaded(hf_model_id: str, loaded_path: str) -> bool:
+    """True if the HF-style id names the snapshot the server has loaded.
+
+    Resolved GGUF paths look like
+    ``.../models--<owner>--<repo>/snapshots/<rev>[/<quant>]/<file>.gguf``.
+    The HF cache stores a revision dir (hash or ref); unsloth-style repos put
+    the quant in a subdir beneath it. Owner and repo must match exactly; the
+    configured quant must appear somewhere below the snapshot rev so two
+    quants of one repo never cross-match.
+    """
+    if not loaded_path:
+        return False
+    m = re.search(r"models--([^/]+)--(.+)/snapshots/(.+)", loaded_path)
+    if not m:
+        return os.path.basename(loaded_path) == hf_model_id
+    owner, repo, tail = m.group(1), m.group(2), m.group(3)
+    cfg_repo = _hf_repo(hf_model_id)  # "owner/repo"
+    if "/" not in cfg_repo:
+        return False
+    cfg_owner, cfg_name = cfg_repo.split("/", 1)
+    if owner != cfg_owner or repo != cfg_name:
+        return False
+    quant = _hf_quant(hf_model_id).lower()
+    return quant in tail.lower()
+
+
+def discover_models():
+    """Model IDs available to llama-server (HF cache), via discover_models.sh."""
+    script = os.path.join(os.path.dirname(MODELS_FILE), "discover_models.sh")
+    try:
+        out = subprocess.run(["bash", script], capture_output=True, text=True, timeout=30)
+        return json.loads(out.stdout) if out.returncode == 0 else []
+    except Exception:
+        return []
+
+
+def catalog_models():
+    """OpenAI-style /v1/models payload: cache-discovered models + live server."""
+    loaded_path = ""
+    try:
+        with urllib.request.urlopen(f"{UPSTREAM}/props", timeout=2) as r:
+            loaded_path = json.load(r).get("model_path", "") or ""
+    except Exception:
+        pass  # server down — advertise catalog without a loaded model
+
+    with open(MODELS_FILE) as f:
+        cfg = json.load(f)
+    default_id = cfg.get("default_model", "")
+    overrides = cfg.get("models", {})
+    discovered = discover_models() or list(overrides)  # fall back to config if cache listing fails
+
+    data = []
+    loaded_ctx = None
+    for mid in discovered:
+        m = overrides.get(mid, {})
+        loaded = bool(loaded_path) and _matches_loaded(mid, loaded_path)
+        ctx = m.get("ctx_size")
+        entry = {
+            "id": mid,
+            "object": "model",
+            "created": 0,
+            "owned_by": "llama-bar",
+            # Standard fields so OpenAI-compatible clients (omp model discovery,
+            # etc.) learn the context window without parsing the llamabar block.
+            "context_length": ctx,
+            "max_model_len": ctx,
+            "llamabar": {
+                "loaded": loaded,
+                "default": mid == default_id,
+                "quant": _hf_quant(mid),
+                "ctx_size": ctx,
+                "reasoning": m.get("reasoning", "off") == "on",
+            },
+        }
+        if loaded:
+            entry["alias"] = os.path.basename(loaded_path)
+            loaded_ctx = ctx
+        data.append(entry)
+
+    # Keep the raw llama-server id routable (e.g. curl examples, old configs).
+    if loaded_path and not any(d["id"] == os.path.basename(loaded_path) for d in data):
+        alias_entry = {
+            "id": os.path.basename(loaded_path),
+            "object": "model",
+            "created": 0,
+            "owned_by": "llama-bar",
+            "llamabar": {"loaded": True},
+        }
+        if loaded_ctx:
+            alias_entry["context_length"] = loaded_ctx
+            alias_entry["max_model_len"] = loaded_ctx
+        data.append(alias_entry)
+
+    return {"object": "list", "data": data}
+
+
 class Proxy(http.server.BaseHTTPRequestHandler):
     # Silence the default per-request stderr logging
     def log_message(self, *args):
         pass
 
     def do_GET(self):
+        if self.path.rstrip("/").endswith("/v1/models"):
+            try:
+                payload = json.dumps(catalog_models()).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except Exception as e:  # models.json missing/unparseable
+                log(f"ERROR catalog: {e}")
+                body = json.dumps({"error": {"code": 500, "message": f"catalog error: {e}"}}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+            return
         self._proxy("GET")
 
     def do_POST(self):
@@ -127,5 +258,6 @@ class Proxy(http.server.BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"[proxy] LlamaBar proxy: 0.0.0.0:{LISTEN_PORT} → {UPSTREAM}")
     print(f"[proxy] Injecting '{DEFAULT_REASONING}' into system prompt")
+    print(f"[proxy] Catalog: {MODELS_FILE}")
     print(f"[proxy] Log: {LOG_FILE}")
     http.server.ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Proxy).serve_forever()
