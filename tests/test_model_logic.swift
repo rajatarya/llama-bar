@@ -116,6 +116,34 @@ struct TestRunner {
         check(parseDecodeTokensPerSecond(#"{"latest":null,"recent":[]}"#) == nil, "MTPLX before first request → nil")
         check(parseDecodeTokensPerSecond("garbage") == nil, "garbage metrics → nil")
 
+        // MARK: Busy detection
+
+        // llama.cpp: processing gauge is authoritative.
+        let promBusy = "llamacpp:requests_processing 1\nllamacpp:tokens_predicted_total 100"
+        let promIdle = "llamacpp:requests_processing 0\nllamacpp:tokens_predicted_total 100"
+        check(detectGenerationBusy(activity: parseServerActivity(promBusy), previousKey: "t100"),
+              "llama.cpp processing gauge 1 → busy")
+        check(!detectGenerationBusy(activity: parseServerActivity(promIdle), previousKey: "t100"),
+              "llama.cpp processing gauge 0 → idle")
+        // No gauge → fall back to predicted-token counter growth.
+        let promNoGauge = "llamacpp:tokens_predicted_total 150"
+        check(detectGenerationBusy(activity: parseServerActivity(promNoGauge), previousKey: "t100"),
+              "predicted_total growth → busy")
+        check(!detectGenerationBusy(activity: parseServerActivity(promNoGauge), previousKey: "t150"),
+              "predicted_total unchanged → idle")
+        // MTPLX: identity = request_id + completion_tokens + decode_elapsed_s.
+        let mtplx1 = #"{"latest":{"request_id":"a","completion_tokens":10,"decode_elapsed_s":1.0}}"#
+        let mtplx2 = #"{"latest":{"request_id":"b","completion_tokens":10,"decode_elapsed_s":1.0}}"#
+        let k1 = busyPollKey(activity: parseServerActivity(mtplx1), body: mtplx1)
+        check(detectGenerationBusy(activity: parseServerActivity(mtplx2), previousKey: k1),
+              "MTPLX new request_id → busy")
+        check(!detectGenerationBusy(activity: parseServerActivity(mtplx1), previousKey: k1),
+              "MTPLX stale snapshot → idle")
+        check(!detectGenerationBusy(activity: parseServerActivity(mtplx1), previousKey: nil),
+              "first poll (nil key) → never busy")
+        check(!detectGenerationBusy(activity: parseServerActivity("garbage"), previousKey: nil),
+              "garbage metrics → idle")
+
         if failures == 0 {
             print("✅ All model logic tests passed")
             exit(0)

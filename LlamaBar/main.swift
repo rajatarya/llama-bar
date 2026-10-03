@@ -42,10 +42,13 @@ private func runningModelId(_ cfg: ModelsConfig) -> String? {
     return cfg.modelId(forRunningPath: path, candidates: discovered)
 }
 
-/// Generation tok/s from /metrics (llama-server Prometheus or MTPLX JSON).
-private func tokensPerSecond() -> Double? {
+/// One /metrics fetch feeding both tok/s and busy detection.
+private func metricsSnapshot() -> (body: String, busy: Bool)? {
     guard let body = sh("/usr/bin/curl", "-s", "--max-time", "2", metricsURL) else { return nil }
-    return parseDecodeTokensPerSecond(body)
+    let activity = parseServerActivity(body)
+    let busy = detectGenerationBusy(activity: activity, previousKey: lastPollKey)
+    lastPollKey = busyPollKey(activity: activity, body: body)
+    return (body, busy)
 }
 
 private func fmtDuration(_ secs: TimeInterval) -> String {
@@ -111,6 +114,9 @@ var discovered: [String] = []
 var modelSubmenuFingerprint = ""
 // NSMenuItem.target is weak, so keep strong refs to keep menu actions alive.
 var modelTargets: [String: Target] = [:]
+// Busy-detection state: last /metrics poll identity + spinner frame index.
+var lastPollKey: String?
+var spinPhase = 0
 
 /// Model IDs available to llama-server (HF cache), via discover_models.sh.
 func discoverModels() -> [String] {
@@ -168,6 +174,8 @@ func selectModel(_ modelId: String) {
 
 func refresh() {
     let ok = healthy()
+    // One /metrics fetch per tick feeds tok/s and busy detection.
+    let metrics = ok ? metricsSnapshot() : nil
 
     // Load config + cache scan once; the first load pins the default model.
     // The cache list only changes when models are downloaded, so a single
@@ -225,9 +233,16 @@ func refresh() {
         startItem.isEnabled = false
         stopItem.isEnabled = false
     case .running(let t0):
-        item.button?.title = "●"
-        stateItem.title = "Running · up \(fmtDuration(Date().timeIntervalSince(t0)))"
-        if let tps = tokensPerSecond() {
+        let busy = metrics?.busy ?? false
+        if busy {
+            spinPhase = (spinPhase + 1) % 4
+            item.button?.title = ["◐", "◓", "◑", "◒"][spinPhase]
+        } else {
+            spinPhase = 0
+            item.button?.title = "●"
+        }
+        stateItem.title = (busy ? "Generating" : "Running") + " · up \(fmtDuration(Date().timeIntervalSince(t0)))"
+        if let tps = metrics.flatMap({ parseDecodeTokensPerSecond($0.body) }) {
             statsItem.title = String(format: "%.1f tok/s", tps)
         } else {
             statsItem.title = "tok/s: -"

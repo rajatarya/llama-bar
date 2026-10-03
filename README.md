@@ -18,7 +18,7 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 ## Features
 
 ### Menu Bar App
-- ● Green dot = running, ○ grey = stopped, ◐ spinning = starting
+- ● Green dot = idle/running, ○ grey = stopped, ◐ spinning = starting up *or* a generation in flight (the dot cycles spinner glyphs while the model is generating)
 - Click to open menu with start/stop/quit controls
 - **Models ▸** submenu lists everything in `models.json`; ✓ marks the loaded model, clicking another one switches to it
 - Live tok/s from the server's `/metrics` (llama.cpp Prometheus or MTPLX JSON)

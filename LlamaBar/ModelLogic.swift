@@ -95,7 +95,61 @@ func parseDecodeTokensPerSecond(_ body: String) -> Double? {
     return (latest["display_decode_tok_s"] ?? latest["decode_tok_s"]) as? Double
 }
 
-// MARK: - Switching decision
+// MARK: - Busy detection
+
+/// Activity signal read from one /metrics fetch.
+struct ServerActivity: Equatable {
+    var processing: Int?      // llama.cpp:requests_processing gauge
+    var predictedTotal: Int?  // llama.cpp:tokens_predicted_total counter
+    var requestKey: String?   // MTPLX latest request identity
+}
+
+/// Extract the activity signal from a /metrics body (Prometheus text or MTPLX
+/// JSON). MTPLX's `latest` block is a stale snapshot of the last completed
+/// request, so identity = request_id + completion_tokens + decode_elapsed_s.
+func parseServerActivity(_ body: String) -> ServerActivity {
+    var a = ServerActivity()
+    for line in body.components(separatedBy: "\n") {
+        if line.hasPrefix("llamacpp:requests_processing ") {
+            a.processing = Int(line.split(separator: " ").last ?? "")
+        } else if line.hasPrefix("llamacpp:tokens_predicted_total ") {
+            a.predictedTotal = Int(line.split(separator: " ").last ?? "")
+        }
+    }
+    if a.processing == nil && a.predictedTotal == nil,
+       let data = body.data(using: .utf8),
+       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let latest = json["latest"] as? [String: Any] {
+        let id = latest["request_id"] as? String ?? "?"
+        let tok = latest["completion_tokens"] ?? "0"
+        let dec = latest["decode_elapsed_s"] ?? "0"
+        a.requestKey = "\(id):\(tok):\(dec)"
+    }
+    return a
+}
+
+/// True while a generation is in flight. llama.cpp: explicit processing gauge,
+/// else predicted-token counter growth against the previous poll's "t<count>"
+/// key. MTPLX: the latest-request identity changed since the last poll.
+/// `previousKey` nil = first poll → never busy.
+func detectGenerationBusy(activity: ServerActivity, previousKey: String?) -> Bool {
+    guard let previousKey else { return false }
+    if let p = activity.processing { return p > 0 }
+    if let t = activity.predictedTotal {
+        return previousKey != "t\(t)"
+    }
+    if let k = activity.requestKey { return k != previousKey }
+    return false
+}
+
+/// Poll-state key for one /metrics body: the MTPLX request identity, else the
+/// llama.cpp predicted-token count, else the raw body (identical bodies across
+/// polls — a stale MTPLX snapshot — read as idle).
+func busyPollKey(activity: ServerActivity, body: String) -> String {
+    if let k = activity.requestKey { return k }
+    if let t = activity.predictedTotal { return "t\(t)" }
+    return body
+}
 
 /// What selecting a model should do, given the server state.
 enum SwitchAction: Equatable {
