@@ -1,5 +1,5 @@
-// Test the pure model logic used by the menu bar app.
-// Compile + run:  swiftc -o /tmp/test-model-logic tests/test_model_logic.swift LlamaBar/ModelLogic.swift && /tmp/test-model-logic
+// Test the pure model logic and process runner used by the menu bar app.
+// Compile + run:  swiftc -o /tmp/test-model-logic tests/test_model_logic.swift LlamaBar/ModelLogic.swift LlamaBar/Shell.swift && /tmp/test-model-logic
 import Foundation
 
 @main
@@ -143,6 +143,65 @@ struct TestRunner {
               "first poll (nil key) → never busy")
         check(!detectGenerationBusy(activity: parseServerActivity("garbage"), previousKey: nil),
               "garbage metrics → idle")
+
+        // MARK: Running-model resolution when several repos share a quant
+
+        // llama-server reports the HF-cache path, whose models--owner--repo
+        // segment identifies the repo; the quant alone is ambiguous.
+        let gemmaQ8 = "ggml-org/gemma-3-1b-it-GGUF:Q8_0"
+        let qwen8bQ8 = "ggml-org/Qwen3-8B-GGUF:Q8_0"
+        let qwen36Q8 = "ggml-org/Qwen3.6-35B-A3B-MTP-GGUF:Q8_0"
+        let sharedQuant = [gemmaQ8, qwen8bQ8, qwen36Q8, q4]
+        let hub = "/Users/x/.cache/huggingface/hub"
+        check(cfg.modelId(forRunningPath: "\(hub)/models--ggml-org--gemma-3-1b-it-GGUF/snapshots/abc/gemma-3-1b-it-Q8_0.gguf", candidates: sharedQuant) == gemmaQ8,
+              "Q8_0 in 3 repos → resolves gemma by its cache dir")
+        check(cfg.modelId(forRunningPath: "\(hub)/models--ggml-org--Qwen3-8B-GGUF/snapshots/abc/Qwen3-8B-Q8_0.gguf", candidates: sharedQuant) == qwen8bQ8,
+              "Q8_0 in 3 repos → resolves Qwen3-8B (shorter id) by its cache dir")
+        check(cfg.modelId(forRunningPath: "\(hub)/models--bartowski--Muse-Glimmer-30B-GGUF/snapshots/abc/ggml-model-q6_k.gguf", candidates: sharedQuant) == nil,
+              "known repo, uncached quant → nil, never another repo's id")
+        check(cfg.modelId(forRunningPath: "/tmp/ggml-model-q4_k_m.gguf", candidates: [q4]) == q4,
+              "path outside the HF cache → quant-only fallback")
+
+        // MARK: Menu bar label
+
+        let labelJSON = #"""
+        {"default_model":"a/Bee-GGUF:Q4_K_M","models":{
+          "a/Bee-GGUF:Q4_K_M":{"name":"Bee Q4_K_M","short_name":"Bee"},
+          "c/Long-GGUF:IQ1_M":{"name":"A Very Long Model Name That Keeps Going"}}}
+        """#
+        if let lc = try? JSONDecoder().decode(ModelsConfig.self, from: Data(labelJSON.utf8)) {
+            check(lc.menuBarLabel(for: "a/Bee-GGUF:Q4_K_M") == "Bee", "short_name is the menu bar label")
+            let long = lc.menuBarLabel(for: "c/Long-GGUF:IQ1_M")
+            check(long.count <= menuBarLabelMaxLength && long.hasSuffix("…"), "long name truncated with … (got \(long))")
+            check(lc.menuBarLabel(for: "x/Unconfigured-GGUF:Q8_0") == "Unconfigured Q8_0",
+                  "unconfigured id → repo name without -GGUF + quant")
+            check(lc.menuBarLabel(for: "") == "", "no model → empty label")
+            check(!lc.displayTitle(for: "x/Unconfigured-GGUF:Q8_0").contains("Unknown"),
+                  "menu title names an unconfigured discovered model")
+        } else {
+            check(false, "label test config decodes")
+        }
+
+        // MARK: Process runner (never deadlock, never hang)
+
+        // Bodies bigger than the 64 KB pipe buffer deadlocked the old
+        // waitUntilExit-then-read helper (curl blocked writing /metrics).
+        func withinDeadline<T>(_ seconds: Double, _ body: @escaping () -> T) -> (finished: Bool, value: T?) {
+            let sem = DispatchSemaphore(value: 0)
+            var out: T?
+            DispatchQueue.global().async { out = body(); sem.signal() }
+            let finished = sem.wait(timeout: .now() + seconds) == .success
+            return (finished, finished ? out : nil)
+        }
+        let big = withinDeadline(15) { runCapturing(["/bin/sh", "-c", "head -c 300000 /dev/zero | tr '\\0' a"], timeout: 10) }
+        check(big.finished, "300 KB of output does not deadlock")
+        check(big.value??.count == 300_000, "300 KB of output comes back intact")
+        let t0 = Date()
+        let slow = withinDeadline(15) { runCapturing(["/bin/sleep", "5"], timeout: 0.5) }
+        check(slow.finished && slow.value! == nil && Date().timeIntervalSince(t0) < 3,
+              "hung command is killed at its timeout → nil")
+        check(runCapturing(["/nonexistent/binary"], timeout: 1) == nil, "unlaunchable command → nil")
+        check(runCapturing(["/bin/echo", "hi"], timeout: 2) == "hi\n", "captures stdout")
 
         if failures == 0 {
             print("✅ All model logic tests passed")

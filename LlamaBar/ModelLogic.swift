@@ -10,6 +10,7 @@ import Foundation
 /// no llama.cpp tuning at all.
 struct ModelConfig: Codable {
     let name: String
+    let short_name: String?  // menu bar label; defaults to name
     let backend: String?     // "llamacpp" (default) or "mtplx"
     let ctx_size: Int?
     let ngl: Int?
@@ -39,38 +40,70 @@ struct ModelsConfig: Codable {
         }
     }
 
-
     /// Match a server's model_path to one of the available ids. MTPLX reports
-    /// its pack directory (…/owner--repo), matched exactly; llama-server
-    /// reports a GGUF, matched by quant (…/ggml-model-q4_k_m.gguf →
-    /// bartowski/…:Q4_K_M). nil if unknown.
+    /// its pack directory (…/owner--repo), matched exactly. llama-server
+    /// reports a GGUF: an HF-cache path (…/models--owner--repo/snapshots/…)
+    /// pins the repo, then the file name picks the quant
+    /// (…/ggml-model-q4_k_m.gguf → bartowski/…:Q4_K_M). Paths outside the
+    /// cache match by quant alone. nil if unknown.
     func modelId(forRunningPath path: String, candidates: [String]) -> String? {
         let base = (path as NSString).lastPathComponent.lowercased()
         let ids = menuModelIDs(discovered: candidates)
         let isMtplx = { (id: String) in id.hasSuffix(":MTPLX") }
+        let cacheDir = { (id: String) in
+            "models--" + (id.split(separator: ":").first.map(String.init) ?? id)
+                .replacingOccurrences(of: "/", with: "--").lowercased()
+        }
         for id in ids where isMtplx(id) {
             let repo = id.dropLast(":MTPLX".count)
             if base == repo.replacingOccurrences(of: "/", with: "--").lowercased() { return id }
         }
-        // Longest id first so ":Q4_K_M" never steals a ":Q4_K_M_XL" path.
-        for id in ids.filter({ !isMtplx($0) }).sorted(by: { $0.count > $1.count }) {
-            if let quant = id.split(separator: ":").last?.lowercased(),
-               base.contains(quant) {
-                return id
-            }
+        var gguf = ids.filter { !isMtplx($0) }
+        // Several repos share quants (Q8_0, Q4_K_M), so the quant alone is ambiguous.
+        if let dir = path.lowercased().split(separator: "/").first(where: { $0.hasPrefix("models--") }) {
+            gguf = gguf.filter { cacheDir($0) == dir }
+        }
+        // Longest quant first so ":Q2_K" never steals a ":Q2_K_XL" path.
+        let quant = { (id: String) in id.split(separator: ":").last.map { $0.lowercased() } ?? "" }
+        for id in gguf.sorted(by: { (quant($0).count, $0) > (quant($1).count, $1) })
+        where base.contains(quant(id)) {
+            return id
         }
         return nil
     }
 
+    /// Compact model name for the menu bar: short_name, else name, else the
+    /// name derived from the id, truncated to menuBarLabelMaxLength.
+    func menuBarLabel(for modelId: String) -> String {
+        guard !modelId.isEmpty else { return "" }
+        let label = models[modelId]?.short_name ?? models[modelId]?.name ?? derivedModelName(modelId)
+        guard label.count > menuBarLabelMaxLength else { return label }
+        return String(label.prefix(menuBarLabelMaxLength - 1)) + "…"
+    }
+
     /// "Model: Muse-Glimmer-30B Q4_K_M • bartowski Q4_K_M"
     func displayTitle(for modelId: String) -> String {
-        let name = models[modelId]?.name ?? "Unknown"
         let parts = modelId.split(separator: ":", maxSplits: 1)
+        let name = models[modelId]?.name ?? (parts.count == 2 ? derivedModelName(modelId) : "Unknown")
         guard parts.count == 2 else { return "Model: \(name)" }
         let repo = String(parts[0])
         let repoName = repo.split(separator: "/").last.map(String.init) ?? repo
         return "Model: \(name) • \(repoName) \(parts[1])"
     }
+}
+
+/// The menu bar is shared with every other status item and the notch, so the
+/// model label stays short.
+let menuBarLabelMaxLength = 24
+
+/// Readable name for a discovered id with no models.json entry:
+/// "ggml-org/Qwen3-8B-GGUF:Q8_0" → "Qwen3-8B Q8_0".
+func derivedModelName(_ modelId: String) -> String {
+    let parts = modelId.split(separator: ":", maxSplits: 1)
+    guard parts.count == 2 else { return modelId }
+    var repoName = parts[0].split(separator: "/").last.map(String.init) ?? String(parts[0])
+    if repoName.lowercased().hasSuffix("-gguf") { repoName.removeLast(5) }
+    return "\(repoName) \(parts[1])"
 }
 
 /// Parse the JSON array emitted by discover_models.sh; anything invalid → empty.
