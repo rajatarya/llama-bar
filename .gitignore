@@ -1,4 +1,6 @@
 *.log
 *.pid
 .DS_Store
-MenuBar/GlimmerBar.app
+LlamaBar/LlamaBar.app/
+LlamaBar/.LlamaBar.app.build/
+__pycache__/

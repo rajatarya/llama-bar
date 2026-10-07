@@ -1,9 +1,10 @@
 {
-  "default_model": "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX",
-  "_comment": "Tuning overrides only. The model list comes from llama-server --cache-list plus installed MTPLX packs (discover_models.sh). Any cached model not listed here still appears in the menu and launches with llama-fit-params-computed ctx/ngl. backend: llamacpp (default) or mtplx (ids ending :MTPLX); mtplx honours ctx_size, reasoning, temp, top_p, top_k.",
+  "default_model": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF:IQ1_M",
+  "_comment": "Tuning overrides only. The model list comes from llama-server --cache-list plus installed MTPLX packs (discover_models.sh). Any cached model not listed here still appears in the menu and launches with llama-fit-params-computed ctx/ngl. backend: llamacpp (default) or mtplx (ids ending :MTPLX); mtplx honours ctx_size, reasoning, temp, top_p, top_k. short_name (optional, <=24 chars) is the menu bar label; defaults to name.",
   "models": {
     "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX": {
       "name": "Qwen3.8-Flash-Next (MTPLX)",
+      "short_name": "Flash-Next MTPLX",
       "backend": "mtplx",
       "ctx_size": 262144,
       "needs_proxy": false,
@@ -15,6 +16,7 @@
     },
     "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality:MTPLX": {
       "name": "Qwen3.8-27B (MTPLX)",
+      "short_name": "Qwen3.8-27B MTPLX",
       "backend": "mtplx",
       "ctx_size": 262144,
       "needs_proxy": false,
@@ -26,6 +28,7 @@
     },
     "bartowski/Muse-Glimmer-30B-GGUF:Q4_K_M": {
       "name": "Muse-Glimmer-30B Q4_K_M",
+      "short_name": "Glimmer Q4_K_M",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
@@ -36,6 +39,7 @@
     },
     "bartowski/Muse-Glimmer-30B-GGUF:Q5_K_M": {
       "name": "Muse-Glimmer-30B Q5_K_M",
+      "short_name": "Glimmer Q5_K_M",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
@@ -46,6 +50,7 @@
     },
     "unsloth/Muse-Glimmer-30B-GGUF:BF16": {
       "name": "Muse-Glimmer-30B BF16",
+      "short_name": "Glimmer BF16",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
@@ -56,6 +61,7 @@
     },
     "unsloth/DeepSeek-V4-Flash-0731-GGUF:Q2_K_XL": {
       "name": "DeepSeek-V4-Flash-0731 UD-Q2_K_XL",
+      "short_name": "DeepSeek-V4 Q2_K_XL",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
@@ -73,6 +79,7 @@
     },
     "vcruz305/DeepSeek-V4.1-Flash-GGUF:Q2_K": {
       "name": "DeepSeek-V4.1-Flash Q2_K",
+      "short_name": "DeepSeek-V4.1 Q2_K",
       "ctx_size": 131072,
       "ngl": 64,
       "batch_size": 256,
@@ -90,6 +97,7 @@
     },
     "unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS": {
       "name": "Qwen3.8-Flash-Next IQ4_XS",
+      "short_name": "Flash-Next IQ4_XS",
       "ctx_size": 262144,
       "ngl": 64,
       "batch_size": 256,
@@ -103,6 +111,23 @@
       "min_p": 0.0,
       "presence_penalty": 1.5,
       "description": "Qwen3.8-Flash-Next 125B MoE IQ4_XS, 262K context, unsloth GGUF. Instruct mode (enable_thinking=false): temp 0.7, top_p 0.80, top_k 20, presence_penalty 1.5, min_p 0.0"
+    },
+    "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF:IQ1_M": {
+      "name": "Qwen3.8-Flash-Next GSQ-RCO Coder IQ1_M",
+      "short_name": "Flash-Next Coder IQ1_M",
+      "ctx_size": 262144,
+      "ngl": 99,
+      "batch_size": 256,
+      "ubatch_size": 256,
+      "needs_proxy": false,
+      "proxy_injection": "",
+      "reasoning": "off",
+      "temp": 0.7,
+      "top_p": 0.8,
+      "top_k": 20,
+      "min_p": 0.0,
+      "presence_penalty": 1.5,
+      "description": "Qwen3.8-Flash-Next coder variant, 50% of experts pruned (256 of 512 kept), GSQ-RCO IQ1_M, 58.4 GB in two shards plus BF16 mmproj. llama-fit-params on this M5 Max (2026-10-06): full 262K context, all layers on Metal; estimated 35.2 GiB Metal (27.3 weights, 6.9 KV, 1.1 compute) plus 27.1 GiB host for the n-gram table shard. Instruct mode, same sampling as the IQ4_XS entry; the model card's benchmarks were run at xhigh reasoning."
     }
   }
 }

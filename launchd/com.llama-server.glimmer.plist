@@ -16,6 +16,11 @@
     <key>KeepAlive</key>
     <true/>
 
+    <!-- start.sh exits after launching a nohup'd llama-server. Without this,
+         launchd kills the whole process group when start.sh exits. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
     <key>StandardOutPath</key>
     <string>/Users/rajat/.cache/llama-server-launch.log</string>
 

@@ -18,9 +18,9 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 ## Features
 
 ### Menu Bar App
-- ● Green dot = running, ○ grey = stopped, ◐ spinning = starting
+- The menu bar shows the status and the running model, e.g. `● Flash-Next Coder IQ1_M`: ● running, ○ stopped, ◐ starting up *or* generating (the glyph cycles while the model is generating). The label is the model's `short_name` from `models.json`.
 - Click to open menu with start/stop/quit controls
-- **Models ▸** submenu lists everything in `models.json`; ✓ marks the loaded model, clicking another one switches to it
+- **Models ▸** submenu lists every model discovered in the HF cache and MTPLX store; ✓ marks the loaded model, clicking another one switches to it
 - Live tok/s from the server's `/metrics` (llama.cpp Prometheus or MTPLX JSON)
 - Audible notification when model loads
 - Auto-starts server on launch, registers as login item
@@ -29,18 +29,18 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 - `start.sh` launches llama-server with optimal config (flash-attn, GPU layers, context size), or `mtplx serve` for MTPLX packs
 - `proxy.py` injects reasoning prompts transparently
 - `stop.sh` / `status.sh` for control
-- LaunchAgent support for headless operation
+- A LaunchAgent (`launchd/`) for headless use *without* the app. Don't install it alongside the app: it restarts the server every ~10 s, so Stop and model switches stop working.
 
 ### Backends: llama.cpp and MTPLX
 Each model runs on one of two backends, both served on port 8080 behind the same proxy and menu:
 - **llama.cpp** (default): GGUFs from the HF cache, ids like `unsloth/Qwen3.8-Flash-Next-GGUF:IQ4_XS`.
 - **MTPLX**: [MTPLX](https://github.com/youssofal/MTPLX) packs (MLX weights + the model's native MTP heads for speculative decoding), ids like `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed:MTPLX`. Installed packs (`mtplx list`) appear in the Models menu automatically. Install with `uv tool install mtplx` and add packs with `mtplx pull <repo> --json`.
 
-In `models.json`, `"backend": "mtplx"` (paired with the `:MTPLX` id tag) selects MTPLX. MTPLX honours `ctx_size` (`--context-window`), `reasoning`, `temp`, `top_p`, `top_k`; `ngl`, batch sizes, `min_p`, penalties, `chat_template_kwargs` and DSpark drafts are llama.cpp-only. On an M5 Max, MTPLX runs Qwen3.8-Flash-Next at ~95 tok/s (4K context) vs ~47 for llama.cpp's IQ4_XS, which is why it is the default.
+In `models.json`, `"backend": "mtplx"` (paired with the `:MTPLX` id tag) selects MTPLX. MTPLX honours `ctx_size` (`--context-window`), `reasoning`, `temp`, `top_p`, `top_k`; `ngl`, batch sizes, `min_p`, penalties, `chat_template_kwargs` and DSpark drafts are llama.cpp-only. On an M5 Max, MTPLX runs Qwen3.8-Flash-Next at ~95 tok/s (4K context) vs ~47 for llama.cpp's IQ4_XS.
 
 ### Reusable Design
 While built for Muse-Glimmer-30B-BF16, the setup is model-agnostic:
-- Edit `start.sh` for your model path and parameters
+- Any GGUF downloaded into the HF cache shows up in the Models menu; `models.json` only holds per-model overrides
 - Update `proxy.py` if your model needs different system prompt injection
 - Pi provider config in `~/.pi/agent/models.json` points to the proxy
 
@@ -56,35 +56,39 @@ While built for Muse-Glimmer-30B-BF16, the setup is model-agnostic:
 ```bash
 git clone <repo>
 cd llama-bar
-./LlamaBar/build.sh
-open LlamaBar/GlimmerBar.app
+./LlamaBar/build.sh --relaunch   # builds LlamaBar/LlamaBar.app and (re)opens it
 ```
 
 The app auto-registers as a login item on first launch.
 
 ### Configure for your model
-1. Edit `start.sh`:
-   - `MODEL_FILE` path to your GGUF
-   - `--ctx-size`, `--n-gpu-layers`, `--batch-size` for your hardware
-2. Update `proxy.py` if your model needs different reasoning injection
-3. Update `~/.pi/agent/models.json` to point to `http://localhost:8081/v1`
+1. Download the model into the HF cache, e.g. `hf download owner/repo --include "QUANT/*"`. It appears in the Models menu automatically.
+2. Optionally add an entry to `models.json` for overrides: `short_name` (menu bar label), sampling, `ctx_size`/`ngl` (otherwise computed by `llama-fit-params` at launch). Check it with `./start.sh --dry-run --model owner/repo:QUANT`.
+3. Set `default_model` to the model to start at login.
+4. Update `proxy.py` if your model needs different reasoning injection, and point `~/.pi/agent/models.json` at `http://localhost:8081/v1`.
 
 ## Project Structure
 
 ```
 llama-bar/
 ├── LlamaBar/              # Swift menu bar app
-│   ├── main.swift        # Status item, menu, health checks
-│   ├── ModelLogic.swift  # Pure config/switching logic (unit-testable)
+│   ├── main.swift        # Status item, menu, background polling
+│   ├── ModelLogic.swift  # Pure config/switching/label logic (unit-testable)
+│   ├── Shell.swift       # Subprocess runner with timeout (unit-testable)
 │   └── build.sh          # Compile to .app bundle
 ├── run_tests.sh          # One-command test suite
-├── start.sh              # Launch llama-server + proxy
+├── start.sh              # Launch llama-server (or mtplx serve) + proxy
 ├── stop.sh               # Stop services
 ├── status.sh             # Health check
-├── proxy.py              # Reasoning prompt injection
-├── launchd/              # LaunchAgent for headless use
+├── discover_models.sh    # List launchable models (HF cache + MTPLX)
+├── proxy.py              # Reasoning prompt injection, /v1/models catalog
+├── models.json           # Default model + per-model overrides
+├── tests/                # Python + Swift tests
+├── launchd/              # LaunchAgent for headless use (not with the app)
+├── AGENTS.md             # Developer/agent guide
 ├── BENCHMARK.md          # Performance benchmarks
 └── README.md
+```
 
 ## Tests
 
@@ -94,8 +98,8 @@ llama-bar/
 
 Runs config, discovery (including MTPLX pack merging), start.sh (including
 `--dry-run` resolution of every model on both backends), proxy model matching,
-and the Swift model-logic tests.
-```
+the Swift model-logic and process-runner tests, and a type-check of the app.
+See [AGENTS.md](AGENTS.md) for how the app works and how to verify changes.
 
 ## Performance
 
