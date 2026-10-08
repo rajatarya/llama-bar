@@ -2,6 +2,24 @@
 
 A macOS menu bar app for managing local llama-server instances with automatic startup, health monitoring, and reasoning injection proxy.
 
+> [!WARNING]
+> **llama-bar is retired: it is no longer necessary and is no longer maintained.**
+> Everything it was built to do is done far better by **[Llama](https://llama.app/)** — the macOS menu bar app from the
+> llama.cpp team, fully supported by Hugging Face. It is polished, complete, actively maintained, free, open source, and a
+> 1 MB download. Get the macOS binary at **<https://llama.app/download/mac>**, or run `brew install --cask llama-app`.
+>
+> The rest of this README documents this repo as it stood in 2026. Expect no fixes, updates, or support.
+
+## If you used llama-bar, switch like this
+
+| llama-bar | Llama |
+|---|---|
+| `llama-server` on `:8080` + `proxy.py` reasoning shim on `:8081` | one OpenAI-compatible server at `localhost:9931/v1` |
+| `models.json` overrides, `llama-fit-params`, `start.sh --dry-run` | picks quantization, context, batch size, and speculative decoding for your Mac automatically |
+| `discover_models.sh` scanning the HF cache | models already in the same Hugging Face cache show up automatically |
+| `~/.pi/agent/models.json` → `http://localhost:8081/v1` | point it at `http://localhost:9931/v1` |
+| `launchd/` for headless use | `curl -LsSf https://llama.app/install.sh \| sh` for the command-line version |
+
 ## What it does
 
 **llama-bar** is a lightweight menu bar utility that lets you run, monitor, and control local Large Language Model servers directly from your macOS menu bar. It provides:
