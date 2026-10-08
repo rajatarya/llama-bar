@@ -43,7 +43,7 @@ Do not load `launchd/com.llama-server.glimmer.plist` while the app is in use. Wi
 
 1. `schedulePoll()` (main thread) starts at most one poll. On `pollQueue` it curls `/health`, then `/metrics` and `/props` (llama-server) or `/health` (MTPLX) for `model_path`, and on demand runs `discover_models.sh`. It packs the results into a `Snapshot`.
 2. `apply(_:)` (main thread) reloads `models.json` if its mtime changed, resolves the running model id, updates busy state and tok/s, and advances the `State` machine: `stopped` → `starting(target)` → `running`. While starting a switch, it waits until the server reports the *target* model, because the old model keeps answering until `stop.sh` lands.
-3. `render()` sets the menu bar title (`●`/`○`/spinner + the model's label) and the menu items.
+3. `render()` sets the menu bar title (status glyph only — no model text) and the menu items.
 
 Rules that keep the menu bar alive:
 
@@ -61,7 +61,7 @@ Entries are optional overrides; any discovered model can be launched without one
 
 | Field | Read by | Notes |
 | --- | --- | --- |
-| `name`, `short_name`, `description` | app, proxy | `short_name` (≤ 24 chars) is the menu bar label; it falls back to `name`, then to a name derived from the id. Keep labels short: the menu bar is shared with the notch. |
+| `name`, `short_name`, `description` | app, proxy | The menu bar shows only the status icon now; `short_name` survives as a display name in the dropdown/tooltip. Keep labels short: shared with the notch. |
 | `ctx_size`, `ngl` | `start.sh` | Unset → `llama-fit-params` computes them at launch. Fit prints `-ngl -1` for "all layers"; pin `99` instead (the schema test rejects `-1`). |
 | `batch_size`, `ubatch_size` | `start.sh` | Default 256. |
 | `backend` | `start.sh`, app | `llamacpp` (default) or `mtplx`. MTPLX honours only `ctx_size`, `reasoning`, `temp`, `top_p`, `top_k`. |

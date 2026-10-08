@@ -18,7 +18,7 @@ Perfect for developers running Muse-Glimmer, DeepSeek, or other local models for
 ## Features
 
 ### Menu Bar App
-- The menu bar shows the status and the running model, e.g. `● Flash-Next Coder IQ1_M`: ● running, ○ stopped, ◐ starting up *or* generating (the glyph cycles while the model is generating). The label is the model's `short_name` from `models.json`.
+- The menu bar shows only the status icon — no model text: ● running, ○ stopped, ◐ starting up *or* generating (the glyph cycles while the model is generating). Hovering the icon shows the running model; the dropdown names it too.
 - Click to open menu with start/stop/quit controls
 - **Models ▸** submenu lists every model discovered in the HF cache and MTPLX store; ✓ marks the loaded model, clicking another one switches to it
 - Live tok/s from the server's `/metrics` (llama.cpp Prometheus or MTPLX JSON)

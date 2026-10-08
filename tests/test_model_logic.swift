@@ -162,7 +162,7 @@ struct TestRunner {
         check(cfg.modelId(forRunningPath: "/tmp/ggml-model-q4_k_m.gguf", candidates: [q4]) == q4,
               "path outside the HF cache → quant-only fallback")
 
-        // MARK: Menu bar label
+        // MARK: Menu titles
 
         let labelJSON = #"""
         {"default_model":"a/Bee-GGUF:Q4_K_M","models":{
@@ -170,12 +170,6 @@ struct TestRunner {
           "c/Long-GGUF:IQ1_M":{"name":"A Very Long Model Name That Keeps Going"}}}
         """#
         if let lc = try? JSONDecoder().decode(ModelsConfig.self, from: Data(labelJSON.utf8)) {
-            check(lc.menuBarLabel(for: "a/Bee-GGUF:Q4_K_M") == "Bee", "short_name is the menu bar label")
-            let long = lc.menuBarLabel(for: "c/Long-GGUF:IQ1_M")
-            check(long.count <= menuBarLabelMaxLength && long.hasSuffix("…"), "long name truncated with … (got \(long))")
-            check(lc.menuBarLabel(for: "x/Unconfigured-GGUF:Q8_0") == "Unconfigured Q8_0",
-                  "unconfigured id → repo name without -GGUF + quant")
-            check(lc.menuBarLabel(for: "") == "", "no model → empty label")
             check(!lc.displayTitle(for: "x/Unconfigured-GGUF:Q8_0").contains("Unknown"),
                   "menu title names an unconfigured discovered model")
         } else {
